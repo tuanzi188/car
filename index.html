@@ -600,6 +600,22 @@
     @media (hover: none) and (pointer: coarse) {
       .pc-controls-bar { display: none !important; }
       .mobile-touch-left, .mobile-touch-right { display: flex !important; }
+
+      /* 触屏设备仪表盘缩小并居中避让手指，避免大屏横屏盖住右侧按钮组 */
+      .dashboard-cluster {
+        width: 110px;
+        height: 110px;
+        bottom: max(14px, env(safe-area-inset-bottom));
+        right: 50%;
+        transform: translateX(50%);
+        opacity: 0.92;
+        border-width: 1.5px;
+      }
+      .speed-number { font-size: 28px; }
+      .speed-unit { font-size: 9px; }
+      .gear-display { font-size: 12px; }
+      .gforce-text { display: none; }
+      .nitro-gauge-wrap { width: 70px; height: 4px; margin-top: 4px; }
     }
 
     @media (max-width: 900px) {
@@ -631,22 +647,6 @@
         padding: 5px 12px;
         font-size: 10px;
       }
-
-      /* 移动端仪表盘缩小并居中或偏置避让手指 */
-      .dashboard-cluster {
-        width: 110px;
-        height: 110px;
-        bottom: max(14px, env(safe-area-inset-bottom));
-        right: 50%;
-        transform: translateX(50%);
-        opacity: 0.92;
-        border-width: 1.5px;
-      }
-      .speed-number { font-size: 28px; }
-      .speed-unit { font-size: 9px; }
-      .gear-display { font-size: 12px; }
-      .gforce-text { display: none; }
-      .nitro-gauge-wrap { width: 70px; height: 4px; margin-top: 4px; }
     }
 
     /* 超小屏（如 iPhone SE / 小型折叠屏）自适应微调 */
