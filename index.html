@@ -1223,6 +1223,50 @@
         return new THREE.CanvasTexture(cvs);
       }
 
+      /** 程序化碳纤维编织纹理（深色 2/2 斜纹，零外部资源） */
+      function generateCarbonTexture() {
+        const cvs = document.createElement('canvas');
+        cvs.width = cvs.height = 128;
+        const ctx = cvs.getContext('2d');
+        ctx.fillStyle = '#171a20';
+        ctx.fillRect(0, 0, 128, 128);
+        ctx.strokeStyle = 'rgba(120,132,152,0.30)';
+        ctx.lineWidth = 2;
+        for (let i = -128; i < 256; i += 16) {
+          ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i + 128, 128); ctx.stroke();
+        }
+        ctx.strokeStyle = 'rgba(84,94,114,0.18)';
+        for (let i = -128; i < 256; i += 16) {
+          ctx.beginPath(); ctx.moveTo(i + 128, 0); ctx.lineTo(i, 128); ctx.stroke();
+        }
+        ctx.fillStyle = 'rgba(205,215,235,0.10)';
+        for (let y = 0; y < 128; y += 16) {
+          for (let x = 0; x < 128; x += 16) ctx.fillRect(x, y, 3, 3);
+        }
+        const tex = new THREE.CanvasTexture(cvs);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.repeat.set(2, 2);
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
+      /** 程序化旋压轮毂环槽纹理（横向细密明暗条纹，贴轮毂外圈形成同心阶梯感） */
+      function generateRimTexture() {
+        const cvs = document.createElement('canvas');
+        cvs.width = 256; cvs.height = 64;
+        const ctx = cvs.getContext('2d');
+        ctx.fillStyle = '#3a3f46';
+        ctx.fillRect(0, 0, 256, 64);
+        for (let y = 0; y < 64; y += 2) {
+          ctx.fillStyle = y % 4 === 0 ? 'rgba(235,240,245,0.30)' : 'rgba(14,17,23,0.32)';
+          ctx.fillRect(0, y, 256, 2);
+        }
+        const tex = new THREE.CanvasTexture(cvs);
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
       function createTracksideProps() {
         const pStart = trackCurve.getPointAt(0);
         const tangent = trackCurve.getTangentAt(0);
@@ -1303,6 +1347,105 @@
             scene.add(tower);
           });
         }
+
+        // 红白路缘石（Kerb）：沿赛道两侧边缘连续铺设，红/白各一个 InstancedMesh（仅 2 draw call）
+        const kerbLen = trackCurve.getLength();
+        const kerbN = Math.floor(kerbLen / 1.0);
+        const kerbGeo = new THREE.BoxGeometry(1.0, 0.14, KERB_BAND * 0.9);
+        const kerbRedMat = new THREE.MeshStandardMaterial({ color: 0xe63946, roughness: 0.45, metalness: 0.15 });
+        const kerbWhiteMat = new THREE.MeshStandardMaterial({ color: 0xf4f7fa, roughness: 0.45, metalness: 0.15 });
+        const kerbRed = new THREE.InstancedMesh(kerbGeo, kerbRedMat, kerbN);
+        const kerbWhite = new THREE.InstancedMesh(kerbGeo, kerbWhiteMat, kerbN);
+        {
+          const mtx = new THREE.Matrix4(), quat = new THREE.Quaternion(), bin = new THREE.Vector3();
+          const kerbX = new THREE.Vector3(1, 0, 0);
+          let ri = 0, wi = 0;
+          for (let i = 0; i < kerbN; i++) {
+            const t = (i + 0.5) / kerbN;
+            const pt = trackCurve.getPointAt(t);
+            const tan = trackCurve.getTangentAt(t).normalize();
+            bin.crossVectors(tan, S.axisY).normalize();
+            quat.setFromUnitVectors(kerbX, tan);
+            [-1, 1].forEach(side => {
+              const pos = new THREE.Vector3().copy(pt)
+                .addScaledVector(bin, side * (TRACK_CONFIG.trackWidth / 2 + KERB_BAND / 2));
+              pos.y += 0.16;
+              mtx.compose(pos, quat, new THREE.Vector3(1, 1, 1));
+              if (i % 2 === 0) kerbRed.setMatrixAt(ri++, mtx);
+              else kerbWhite.setMatrixAt(wi++, mtx);
+            });
+          }
+          kerbRed.count = ri;
+          kerbWhite.count = wi;
+        }
+        kerbRed.receiveShadow = true;
+        kerbWhite.receiveShadow = true;
+        scene.add(kerbRed, kerbWhite);
+
+        // 观众看台：起点大直道外侧，观众席用一张程序化纹理模拟全场
+        const standA = trackCurve.getPointAt(0.015);
+        const standB = trackCurve.getPointAt(0.115);
+        const standDir = new THREE.Vector3().subVectors(standB, standA); standDir.y = 0; standDir.normalize();
+        const standSide = new THREE.Vector3(-standDir.z, 0, standDir.x);
+        const standLen = new THREE.Vector3(standA.x, 0, standA.z).distanceTo(new THREE.Vector3(standB.x, 0, standB.z));
+        const standOffset = TRACK_CONFIG.trackWidth / 2 + KERB_BAND + GRASS_BAND + 4;
+
+        const crowdCvs = document.createElement('canvas');
+        crowdCvs.width = 512; crowdCvs.height = 256;
+        const cctx = crowdCvs.getContext('2d');
+        cctx.fillStyle = '#23282f'; cctx.fillRect(0, 0, 512, 256);
+        for (let i = 0; i < 2600; i++) {
+          const px = Math.random() * 512, py = Math.random() * 256;
+          cctx.fillStyle = 'hsla(' + Math.floor(Math.random() * 360) + ',60%,' + (35 + Math.random() * 35) + '%,0.95)';
+          cctx.fillRect(px, py, 3, 3);
+        }
+        const crowdTex = new THREE.CanvasTexture(crowdCvs);
+        crowdTex.colorSpace = THREE.SRGBColorSpace;
+
+        const standMesh = new THREE.Mesh(
+          new THREE.BoxGeometry(standLen, 8, 5),
+          new THREE.MeshStandardMaterial({ color: 0x2b3240, roughness: 0.85, metalness: 0.05 })
+        );
+        standMesh.position.copy(standA).addScaledVector(standSide, standOffset);
+        standMesh.position.y = 3.6;
+        standMesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), standDir);
+        scene.add(standMesh);
+
+        const crowdPlane = new THREE.Mesh(
+          new THREE.PlaneGeometry(standLen, 8),
+          new THREE.MeshBasicMaterial({ map: crowdTex })
+        );
+        crowdPlane.position.copy(standA).addScaledVector(standSide, standOffset);
+        crowdPlane.position.y = 3.6;
+        crowdPlane.lookAt(
+          new THREE.Vector3().copy(standA).addScaledVector(standSide, standOffset - 12).setY(3.6)
+        );
+        scene.add(crowdPlane);
+
+        // 赛道外侧广告牌（程序化文字纹理）
+        const adCvs = document.createElement('canvas');
+        adCvs.width = 256; adCvs.height = 64;
+        const actx = adCvs.getContext('2d');
+        actx.fillStyle = '#0b1220'; actx.fillRect(0, 0, 256, 64);
+        actx.fillStyle = '#00f0ff';
+        actx.font = 'bold 30px sans-serif';
+        actx.textAlign = 'center'; actx.textBaseline = 'middle';
+        actx.fillText('巅峰极速 3D', 128, 32);
+        const adTex = new THREE.CanvasTexture(adCvs);
+        adTex.colorSpace = THREE.SRGBColorSpace;
+        const adMat = new THREE.MeshStandardMaterial({ map: adTex, emissive: 0x00444d, emissiveIntensity: 0.35 });
+        const billboardGeo = new THREE.BoxGeometry(0.4, 4, 14);
+        [0.03, 0.055, 0.08].forEach((tt, idx) => {
+          const pt = trackCurve.getPointAt(tt);
+          const tan = trackCurve.getTangentAt(tt).normalize();
+          const bin = new THREE.Vector3().crossVectors(tan, S.axisY).normalize();
+          const side = idx % 2 === 0 ? 1 : -1;
+          const b = new THREE.Mesh(billboardGeo, adMat);
+          b.position.copy(pt).addScaledVector(bin, side * (standOffset - 2));
+          b.position.y = 3.2;
+          b.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tan);
+          scene.add(b);
+        });
       }
 
       /* ---------------------- 3. 障碍物系统（三变体：水马 / 油桶 / 破损路段） ---------------------- */
@@ -1363,7 +1506,7 @@
           bevelSize: 0.05, bevelSegments: 2, curveSegments: 5,
         });
         mainBodyGeo.rotateY(Math.PI / 2);   // 挤出轴对齐水马长度方向（X）
-        mainBodyGeo.translate(0, 0.155, 0); // 底面落在橡胶底座之上
+        mainBodyGeo.translate(-1.16, 0.155, 0); // 长度居中，底面落在橡胶底座之上
         const topLipGeo = new THREE.BoxGeometry(2.36, 0.12, 0.52);
         const stripeGeo = new THREE.BoxGeometry(0.32, 0.44, 0.56);
         const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
@@ -1678,6 +1821,7 @@
           color: 0x12151c,
           metalness: 0.85,
           roughness: 0.32,
+          map: generateCarbonTexture(),
         });
         const darkTrimMat = new THREE.MeshStandardMaterial({
           color: 0x080b10,
@@ -1889,6 +2033,7 @@
           color: spec.color === 0x00f0ff ? 0x242b35 : 0xd4af37,
           metalness: 0.94,
           roughness: 0.14,
+          map: generateRimTexture(),
         });
         const brakeRotorMat = new THREE.MeshStandardMaterial({
           color: 0x94a3b8,
@@ -1968,6 +2113,51 @@
         const nitroGroup = new THREE.Group();
         nitroGroup.add(flameL, flameR);
         carGroup.add(nitroGroup);
+
+        // 10. 静态部件合并：同材质静态件合成单体，削减 draw call
+        // 动态轮组（wGroup 为 Group 且整体运动）、玻璃座舱、发光件（MeshBasic）保持独立
+        {
+          const mergeStatic = (parent, mat) => {
+            const parts = parent.children.filter(c => c.isMesh && c.material === mat);
+            if (parts.length < 2) return;
+            const positions = [], normals = [], uvs = [], indices = [];
+            let vo = 0;
+            const v = new THREE.Vector3(), n = new THREE.Vector3();
+            parts.forEach(m => {
+              m.updateMatrix();
+              const g = m.geometry;
+              const pos = g.attributes.position;
+              const nor = g.attributes.normal;
+              const uv = g.attributes.uv;
+              const idx = g.index;
+              for (let j = 0; j < pos.count; j++) {
+                v.fromBufferAttribute(pos, j).applyMatrix4(m.matrix);
+                positions.push(v.x, v.y, v.z);
+                if (nor) { n.fromBufferAttribute(nor, j).transformDirection(m.matrix); normals.push(n.x, n.y, n.z); }
+                if (uv) uvs.push(uv.getX(j), uv.getY(j));
+              }
+              if (idx) { for (let j = 0; j < idx.count; j++) indices.push(idx.getX(j) + vo); }
+              else { for (let j = 0; j < pos.count; j++) indices.push(j + vo); }
+              vo += pos.count;
+              parent.remove(m);
+            });
+            const geo = new THREE.BufferGeometry();
+            geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            if (normals.length) geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+            if (uvs.length) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+            geo.setIndex(indices);
+            const merged = new THREE.Mesh(geo, mat);
+            merged.castShadow = true;
+            merged.receiveShadow = true;
+            parent.add(merged);
+          };
+          mergeStatic(carGroup, paintMat);    // 车壳 + 机盖
+          mergeStatic(carGroup, carbonMat);   // 前铲/风刀/侧裙/脊鳍/后视镜/扩散器/尾翼等 14 件
+          mergeStatic(carGroup, darkTrimMat); // 侧进气 + 扩散器导流叶
+          mergeStatic(carGroup, chromeMat);   // 四出排气管
+          // 轮内合并：轮圈 + 三辐条合成一体随轮滚动（每轮 7 → 4，共省 12 draw call）
+          wheels.forEach(wg => mergeStatic(wg, rimOuterMat));
+        }
 
         scene.add(carGroup);
 
