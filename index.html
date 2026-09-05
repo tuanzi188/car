@@ -966,6 +966,11 @@
         shakeMaxRad: 0.05,
       };
 
+      // 太阳光：位置相对车辆的固定偏移（保持全赛道光照方向一致），
+      // 阴影相机随车平移，正交盒只需覆盖车辆近旁即可，见 updateSunShadow。
+      const SUN_OFFSET = new THREE.Vector3(220, 320, 160);
+      const SUN_SHADOW_HALF = 70;   // 阴影相机正交半宽（米）
+
       // 赛道参数：闭合回环高起伏样条
       const TRACK_CONFIG = {
         points: [
@@ -979,6 +984,7 @@
       };
 
       const MAX_OBSTACLES = 34;
+      const OBSTACLE_CULL_RADIUS = 340;   // 距玩家超过此世界半径（米）的障碍隐藏并跳过碰撞检测
       const MAX_SKID_SEGMENTS = isMobileDevice ? 120 : 300;
       const MAX_SMOKE_PARTICLES = isMobileDevice ? 40 : 100;
       const SMOKE_OPACITY_STEPS = 8; // 烟雾共享材质分桶数，避免逐粒子克隆材质
@@ -996,7 +1002,7 @@
       let selectedVehicleType = 'veneno';
       let cameraViewIndex = 0;
 
-      let scene, camera, renderer;
+      let scene, camera, renderer, sunLight;
       let trackCurve = null;
       let playerCar = null;
 
@@ -1673,6 +1679,7 @@
             nearMissed: false,
             knocked: false,
             knockT: 0,
+            removed: false,   // 撞倒并沉降完毕 → 不再复活渲染（供距离剔除区分“远”与“已移除”）
             lat: 0,
             lampHalo: lampHalo,
             haloPhase: (i * 2.4) % (Math.PI * 2), // 相位偏移，使相邻障碍错开闪烁
@@ -1704,6 +1711,7 @@
         obs.userData.nearMissed = false;
         obs.userData.knocked = false;
         obs.userData.knockT = 0;
+        obs.userData.removed = false;
         obs.visible = true;
         activeObstacles.push(obs);
       }
@@ -1898,6 +1906,7 @@
           obs.rotation.x += delta * 2.4 * (1 - k);
           if (k >= 1) {
             ud.knocked = false;
+            ud.removed = true;
             obs.visible = false;
           }
         }
@@ -2575,7 +2584,7 @@
           precision: isMobileDevice ? 'mediump' : 'highp',
         });
         renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2.0));
+        renderer.setPixelRatio(computePixelRatio());
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.0;
         renderer.shadowMap.enabled = !isMobileDevice;
@@ -2590,23 +2599,26 @@
 
         scene.add(new THREE.HemisphereLight(0xbcd8f0, 0x6a7a55, 0.65));
 
-        const sunLight = new THREE.DirectionalLight(0xfff3e0, 2.6);
-        sunLight.position.set(220, 320, 160);
+        sunLight = new THREE.DirectionalLight(0xfff3e0, 2.6);
+        sunLight.position.copy(SUN_OFFSET);
         sunLight.castShadow = !isMobileDevice;
         if (sunLight.castShadow) {
-          sunLight.shadow.mapSize.width = 2048;
-          sunLight.shadow.mapSize.height = 2048;
+          // 阴影相机随车平移（updateSunShadow），正交盒只需覆盖车辆近旁，
+          // 因此可用更小的 mapSize 获得更高阴影精度与更低开销。
+          sunLight.shadow.mapSize.width = 1024;
+          sunLight.shadow.mapSize.height = 1024;
           sunLight.shadow.camera.near = 10;
           sunLight.shadow.camera.far = 900;
           sunLight.shadow.bias = -0.0006;
           sunLight.shadow.normalBias = 0.02;
-          const d = 160;
+          const d = SUN_SHADOW_HALF;
           sunLight.shadow.camera.left = -d;
           sunLight.shadow.camera.right = d;
           sunLight.shadow.camera.top = d;
           sunLight.shadow.camera.bottom = -d;
         }
         scene.add(sunLight);
+        scene.add(sunLight.target);
 
         const groundMesh = new THREE.Mesh(
           new THREE.PlaneGeometry(3200, 3200, 32, 32),
@@ -2917,10 +2929,21 @@
       function checkObstacleCollisions(car, forward) {
         let hitThisFrame = false;
 
+        // 距离剔除：仅对玩家世界半径内的障碍做碰撞与渲染，远处障碍隐藏跳过。
+        // 剔除半径(340m) > 雷达最大探测距离(220m)，故不影响雷达标记。
+        const px = car.pos.x, pz = car.pos.z;
+        const cullSq = OBSTACLE_CULL_RADIUS * OBSTACLE_CULL_RADIUS;
+
         for (let i = 0; i < activeObstacles.length; i++) {
           const obs = activeObstacles[i];
-          if (!obs.visible) continue;
           const ud = obs.userData;
+          if (ud.removed) { obs.visible = false; continue; }
+          const cdx = obs.position.x - px, cdz = obs.position.z - pz;
+          if (cdx * cdx + cdz * cdz > cullSq) {
+            if (obs.visible) obs.visible = false;
+            continue;
+          }
+          if (!obs.visible) obs.visible = true;
           const ox = obs.position.x;
           const oy = obs.position.y + ud.lift;
           const oz = obs.position.z;
@@ -3044,6 +3067,17 @@
       }
 
       /* ---------------------- 8. 多视角摄像机与视口自适应 ---------------------- */
+      /**
+       * 让平行光与阴影相机随玩家平移：光照方向保持不变（偏移恒定），
+       * 但阴影正交盒始终跟随车辆，修复远离原点处投影缺失/错位的问题。
+       */
+      function updateSunShadow(target) {
+        if (!sunLight) return;
+        sunLight.position.copy(target).add(SUN_OFFSET);
+        sunLight.target.position.copy(target);
+        sunLight.target.updateMatrixWorld();
+      }
+
       function updateCamera(delta) {
         if (!playerCar) return;
         const pPos = playerCar.pos;
@@ -3096,6 +3130,8 @@
           const targetFov = 55 + (isPortrait ? 10 : 0);
           if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
         }
+
+        updateSunShadow(pPos);
       }
 
       /* ---------------------- 9. HUD 渲染（脏写优化） ---------------------- */
@@ -3547,7 +3583,7 @@
         camera.aspect = width / height;
         camera.updateProjectionMatrix();
         renderer.setSize(width, height);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2.0));
+        renderer.setPixelRatio(computePixelRatio());
       }
 
       /* ---------------------- 11. 程序化音频（Web Audio 合成，零外部资源） ---------------------- */
@@ -4075,6 +4111,38 @@
       /* ---------------------- 13. 主循环 ---------------------- */
       let lastFrameTime = 0;
 
+      /* 动态分辨率缩放：滚动统计帧率，掉帧时下调渲染倍率、恢复后回升。
+       * 桌面端下限 1.0（不降采样），移动端下限 0.65，兼顾流畅与画质。 */
+      const RES_MIN_SCALE = isMobileDevice ? 0.65 : 1.0;
+      let renderScale = 1;
+      let fpsAccumMs = 0;
+      let fpsFrames = 0;
+
+      function computePixelRatio() {
+        const cap = isMobileDevice ? 1.5 : 2.0;
+        return Math.max(0.6, Math.min(window.devicePixelRatio, cap) * renderScale);
+      }
+      function applyPixelRatio() {
+        renderer.setPixelRatio(computePixelRatio());
+      }
+      /** 每帧采样一次；忽略疑似后台/长卡顿的超长帧，避免误判降质 */
+      function adaptResolution(rawMs) {
+        if (!(rawMs > 0 && rawMs < 500)) return;
+        fpsAccumMs += rawMs;
+        fpsFrames++;
+        if (fpsAccumMs < 500) return;
+        const avgFps = fpsFrames * 1000 / fpsAccumMs;
+        fpsAccumMs = 0;
+        fpsFrames = 0;
+        if (avgFps < 45 && renderScale > RES_MIN_SCALE) {
+          renderScale = Math.max(RES_MIN_SCALE, renderScale - 0.15);
+          applyPixelRatio();
+        } else if (avgFps > 57 && renderScale < 1) {
+          renderScale = Math.min(1, renderScale + 0.1);
+          applyPixelRatio();
+        }
+      }
+
       /** 暂停/恢复切换（Esc 或 P）；仅在比赛进行中可用 */
       function togglePause() {
         if (!isRacing) return;
@@ -4093,8 +4161,10 @@
         requestAnimationFrame(gameLoop);
         if (isPaused) return;
 
-        const delta = Math.min((now - lastFrameTime) / 1000, 0.1);
+        const rawMs = now - lastFrameTime;
+        const delta = Math.min(rawMs / 1000, 0.1);
         lastFrameTime = now;
+        adaptResolution(rawMs);
 
         if (isRacing && playerCar) {
           // 发车倒计时：期间冻结输入与动力，仅让镜头与灯光运转
