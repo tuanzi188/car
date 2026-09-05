@@ -2140,8 +2140,9 @@
           GRIP_STEER_HEADROOM * aLatMax * spec.wheelbase / (vAbs * vAbs),
         );
         const steerLerp = Math.min(1, STEER_FILTER_RATE * delta);
-        car.steerAngle += (inputs.steer * steerLimitPhys - car.steerAngle) * steerLerp;
-        car.visualSteer += (inputs.steer * STEER_MAX_RAD - car.visualSteer) * steerLerp;
+        // 符号修正：输入约定 steer=+1 为右转，而 Three.js 车头绕 +Y 正向旋转实为左转，故取负进入物理
+        car.steerAngle += (-inputs.steer * steerLimitPhys - car.steerAngle) * steerLerp;
+        car.visualSteer += (-inputs.steer * STEER_MAX_RAD - car.visualSteer) * steerLerp;
         car.wheels[0].rotation.y = car.visualSteer;
         car.wheels[1].rotation.y = car.visualSteer;
 
