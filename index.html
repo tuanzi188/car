@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <meta name="theme-color" content="#050811">
+  <meta name="theme-color" content="#87ceeb">
   <!-- PWA：添加到主屏幕后全屏无浏览器头；微信内无法全屏，见竖屏遮罩指引 -->
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -26,7 +26,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: #050811;
+      background: linear-gradient(180deg, #87ceeb 0%, #b8d4e8 60%, #d4e4c8 100%);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       color: #fff;
     }
@@ -340,19 +340,6 @@
       background: linear-gradient(135deg, #ff3366, #b01035);
       border: 2px solid #ff3366;
     }
-    .pedal-handbrake {
-      width: 60px;
-      height: 52px;
-      background: linear-gradient(135deg, #f59e0b, #b45309);
-      border: 2px solid #f59e0b;
-      font-size: 10px;
-    }
-    .pedal-nitro {
-      width: 66px;
-      height: 52px;
-      background: linear-gradient(135deg, #00f0ff, #0066cc);
-      border: 2px solid #00f0ff;
-    }
 
     /* 模态大屏：大厅车库与玩法说明 */
     .screen-modal {
@@ -654,7 +641,6 @@
       .touch-steer-btn { width: 62px; height: 62px; font-size: 22px; }
       .pedal-gas { width: 64px; height: 64px; font-size: 11px; }
       .pedal-brake { width: 56px; height: 52px; font-size: 10px; }
-      .pedal-nitro, .pedal-handbrake { width: 56px; height: 44px; font-size: 9px; }
       .dashboard-cluster { width: 96px; height: 96px; }
       .speed-number { font-size: 24px; }
     }
@@ -755,17 +741,13 @@
       <span class="key-badge">W / ↑</span> 油门 · <span class="key-badge">S / ↓</span> 刹车倒车 · <span class="key-badge">A / D</span> 紧急变道闪避 · <span class="key-badge">空格</span> 手刹漂移 · <span class="key-badge">SHIFT</span> 氮气加速 · <span class="key-badge">C</span> 切换视角 · <span class="key-badge">M</span> 静音
     </div>
 
-    <!-- 移动端触控按键（左手转向，右手组合油门/刹车/手刹/氮气） -->
+    <!-- 移动端触控按键（左手转向，右手油门/刹车） -->
     <div class="mobile-touch-left" id="touch-controls-left">
       <div class="touch-steer-btn" id="btn-steer-left" aria-label="左转">◀</div>
       <div class="touch-steer-btn" id="btn-steer-right" aria-label="右转">▶</div>
     </div>
 
     <div class="mobile-touch-right" id="touch-controls-right">
-      <div class="pedal-sub-row">
-        <div class="touch-pedal-btn pedal-nitro" id="btn-nitro" aria-label="氮气加速">氮气</div>
-        <div class="touch-pedal-btn pedal-handbrake" id="btn-handbrake" aria-label="手刹漂移">漂移</div>
-      </div>
       <div class="pedal-sub-row">
         <div class="touch-pedal-btn pedal-brake" id="btn-brake" aria-label="刹车倒车">刹车</div>
         <div class="touch-pedal-btn pedal-gas" id="btn-gas" aria-label="油门加速">油门</div>
@@ -1009,7 +991,7 @@
       // 输入状态（键盘 / 触控 / 手柄三源分离，避免互相覆盖）
       const inputs = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false };
       const keys = {};
-      const touchState = { gas: false, brake: false, nitro: false, handbrake: false, left: false, right: false, steerValue: 0 };
+      const touchState = { gas: false, brake: false, left: false, right: false, steerValue: 0 };
       const padState = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false, active: false };
 
       // 向量暂存区（Scratchpad）：主循环内零分配，消除 GC 微顿卡
@@ -1174,7 +1156,7 @@
         trackTex.repeat.set(1, 45);
 
         const trackMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
-          color: 0x22262c, roughness: 0.82, metalness: 0.18, map: trackTex,
+          color: 0x3d4148, roughness: 0.82, metalness: 0.18, map: trackTex,
         }));
         trackMesh.receiveShadow = true;
         scene.add(trackMesh);
@@ -1188,7 +1170,7 @@
         scene.add(new THREE.Mesh(barrierGeoL, barrierMat), new THREE.Mesh(barrierGeoR, barrierMat));
 
         const runoffMesh = new THREE.Mesh(runoffGeo, new THREE.MeshStandardMaterial({
-          color: 0x14351f, roughness: 0.96, metalness: 0.02, side: THREE.DoubleSide,
+          color: 0x4a8c3f, roughness: 0.96, metalness: 0.02, side: THREE.DoubleSide,
         }));
         runoffMesh.receiveShadow = true;
         scene.add(runoffMesh);
@@ -1201,11 +1183,11 @@
         cvs.width = 512; cvs.height = 512;
         const ctx = cvs.getContext('2d');
 
-        ctx.fillStyle = '#1c1f24';
+        ctx.fillStyle = '#3a3d42';
         ctx.fillRect(0, 0, 512, 512);
 
         for (let i = 0; i < 4500; i++) {
-          ctx.fillStyle = Math.random() > 0.5 ? '#2b2f38' : '#14161a';
+          ctx.fillStyle = Math.random() > 0.5 ? '#4a4e55' : '#2e3136';
           ctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
         }
 
@@ -1987,7 +1969,8 @@
       function initSceneEnvironment() {
         const container = document.getElementById('game-container');
         scene = new THREE.Scene();
-        scene.fog = new THREE.FogExp2(0x050811, 0.0016);
+        scene.background = new THREE.Color(0x87ceeb);
+        scene.fog = new THREE.FogExp2(0xb8d4e8, 0.0010);
 
         camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.2, 2000);
 
@@ -1999,14 +1982,14 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2.0));
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.15;
+        renderer.toneMappingExposure = 1.0;
         renderer.shadowMap.enabled = !isMobileDevice;
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         container.appendChild(renderer.domElement);
 
-        scene.add(new THREE.HemisphereLight(0x557799, 0x111822, 1.8));
+        scene.add(new THREE.HemisphereLight(0x87ceeb, 0xc8d8a8, 1.0));
 
-        const sunLight = new THREE.DirectionalLight(0xfff5e6, 2.8);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
         sunLight.position.set(220, 320, 160);
         sunLight.castShadow = !isMobileDevice;
         if (sunLight.castShadow) {
@@ -2024,7 +2007,7 @@
 
         const groundMesh = new THREE.Mesh(
           new THREE.PlaneGeometry(3200, 3200, 32, 32),
-          new THREE.MeshStandardMaterial({ color: 0x091018, roughness: 0.95, metalness: 0.05 }),
+          new THREE.MeshStandardMaterial({ color: 0x7a9e6a, roughness: 0.95, metalness: 0.05 }),
         );
         groundMesh.rotation.x = -Math.PI / 2;
         groundMesh.receiveShadow = true;
@@ -2476,7 +2459,7 @@
           'hud-speed', 'hud-gear', 'hud-gforce', 'hud-nitro-fill', 'cam-toggle-btn',
           'audio-toggle-btn', 'start-btn', 'restart-btn', 'game-over-modal', 'finish-stats',
           'finish-title', 'finish-desc', 'car-veneno', 'car-gt3', 'btn-gas', 'btn-brake',
-          'btn-nitro', 'btn-handbrake', 'btn-steer-left', 'btn-steer-right', 'portrait-tip',
+          'btn-steer-left', 'btn-steer-right', 'portrait-tip',
           'fatal-screen', 'hud-combo', 'hud-best', 'lobby-best', 'pause-overlay',
         ];
         ids.forEach(id => { dom[id] = document.getElementById(id); });
@@ -2706,13 +2689,13 @@
         // 三源合成：取最强输入，互不覆盖（修复旧版 touchend 清零截断另一侧按键）
         const touchThrottle = touchState.gas ? 1 : 0;
         const touchBrake = touchState.brake ? 1 : 0;
-        const touchNitro = touchState.nitro;
-        const touchHandbrake = touchState.handbrake;
 
         inputs.throttle = Math.max(touchThrottle, keyThrottle, padState.throttle);
         inputs.brake = Math.max(touchBrake, keyBrake, padState.brake);
-        inputs.nitro = touchNitro || keyNitro || padState.nitro;
-        inputs.handbrake = touchHandbrake || keyHandbrake || padState.handbrake;
+        inputs.nitro = keyNitro || padState.nitro;
+        // 移动端组合漂移：按住刹车 + 转向非零 = 自动拉手刹（两个键不变，保留漂移手感）
+        inputs.handbrake = keyHandbrake || padState.handbrake
+          || (touchBrake > 0 && Math.abs(touchState.steerValue) > 0);
 
         // 转向取最强输入：逐个比较而非构造候选数组，保持主循环零分配
         let steer = touchState.steerValue;
@@ -2724,7 +2707,7 @@
       function resetAllInputs() {
         inputs.throttle = 0; inputs.brake = 0; inputs.steer = 0;
         inputs.handbrake = false; inputs.nitro = false;
-        touchState.gas = false; touchState.brake = false; touchState.nitro = false; touchState.handbrake = false;
+        touchState.gas = false; touchState.brake = false;
         touchState.left = false; touchState.right = false;
         touchState.steerValue = 0;
         Object.keys(keys).forEach(k => { keys[k] = false; });
@@ -2838,8 +2821,6 @@
 
         bindTouchControl('btn-gas', () => { touchState.gas = true; Haptics.tap(); }, () => { touchState.gas = false; });
         bindTouchControl('btn-brake', () => { touchState.brake = true; Haptics.tap(); }, () => { touchState.brake = false; });
-        bindTouchControl('btn-nitro', () => { touchState.nitro = true; Haptics.boost(); }, () => { touchState.nitro = false; });
-        bindTouchControl('btn-handbrake', () => { touchState.handbrake = true; Haptics.drift(); }, () => { touchState.handbrake = false; });
         bindTouchControl('btn-steer-left', () => { touchState.left = true; syncTouchSteer(); Haptics.tap(); }, () => { touchState.left = false; syncTouchSteer(); });
         bindTouchControl('btn-steer-right', () => { touchState.right = true; syncTouchSteer(); Haptics.tap(); }, () => { touchState.right = false; syncTouchSteer(); });
         // 鼠标按下后在任意位置抬起也要释放
@@ -2848,8 +2829,6 @@
             el.classList.remove('pressed');
             if (el === dom['btn-gas']) touchState.gas = false;
             else if (el === dom['btn-brake']) touchState.brake = false;
-            else if (el === dom['btn-nitro']) touchState.nitro = false;
-            else if (el === dom['btn-handbrake']) touchState.handbrake = false;
             else if (el === dom['btn-steer-left']) { touchState.left = false; syncTouchSteer(); }
             else if (el === dom['btn-steer-right']) { touchState.right = false; syncTouchSteer(); }
           });
