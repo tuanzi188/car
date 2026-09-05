@@ -3781,6 +3781,16 @@
       const AI_COLORS = [0x22d3ee, 0xf472b6, 0xa3e635];
       const AI_VEHICLE_IDS = ['veneno', 'gt3', 'veneno'];
       const AI_START_LATS = [-5.5, 5.5, 8.0];
+      /* AI 人格档案：每车机制/数值不同，且每局在此基础上再做 ±10% 随机抖动，
+       * 使行为不再千篇一律。
+       *   skill=弯道极限倍率 · aggression=加速侵略性 · caution=避障谨慎度
+       *   rubber=橡皮筋敏感度 · cruiseLat=巡航车道（避免叠车）
+       *   wanderAmp=车道游摆幅度 · mistakeRate=随机失误概率 · dodgeGain=避障横移倍率 */
+      const AI_PROFILES = [
+        { name: '激进', skill: 1.06, aggression: 1.25, caution: 0.80, rubber: 1.35, cruiseLat: -4.2, wanderAmp: 1.6, mistakeRate: 0.10, dodgeGain: 1.15 },
+        { name: '稳健', skill: 1.00, aggression: 0.90, caution: 1.30, rubber: 0.80, cruiseLat:  0.0, wanderAmp: 0.7, mistakeRate: 0.04, dodgeGain: 1.00 },
+        { name: '飘忽', skill: 0.96, aggression: 1.10, caution: 0.90, rubber: 1.00, cruiseLat:  4.6, wanderAmp: 2.6, mistakeRate: 0.22, dodgeGain: 0.90 },
+      ];
       const aiTmpA = new THREE.Vector3();
       const aiTmpB = new THREE.Vector3();
 
@@ -3793,7 +3803,13 @@
             car.mesh.traverse(m => { if (m.isMesh) m.castShadow = false; });
           }
           car.mesh.visible = false;
-          AI_CARS.push({ car, t: 0, lat: 0, v: 0, laps: 0, targetLat: 0, steerVisual: 0, cooldown: 0 });
+          AI_CARS.push({
+            car, t: 0, lat: 0, v: 0, laps: 0, targetLat: 0, steerVisual: 0, cooldown: 0,
+            prof: AI_PROFILES[i % AI_PROFILES.length],
+            skill: 1, aggression: 1, caution: 1, rubber: 1,
+            cruiseLat: 0, wanderAmp: 1, mistakeRate: 0.1, dodgeGain: 1,
+            wanderPhase: 0, mistakeTimer: 3, mistakeActive: 0,
+          });
         }
       }
 
@@ -3803,9 +3819,25 @@
         const startAngle = Math.atan2(-tangent.x, -tangent.z);
         for (let i = 0; i < AI_CARS.length; i++) {
           const ai = AI_CARS[i];
+          // 每局重新掷人格：档案基准值 × ±10% 随机抖动，起步横位也轻微随机
+          const prof = AI_PROFILES[i % AI_PROFILES.length];
+          const jit = () => 0.9 + Math.random() * 0.2;
+          ai.prof = prof;
+          ai.skill = prof.skill * jit();
+          ai.aggression = prof.aggression * jit();
+          ai.caution = prof.caution * jit();
+          ai.rubber = prof.rubber * jit();
+          ai.dodgeGain = prof.dodgeGain * jit();
+          ai.cruiseLat = Math.max(-8, Math.min(8, prof.cruiseLat + (Math.random() - 0.5) * 2.4));
+          ai.wanderAmp = prof.wanderAmp * (0.7 + Math.random() * 0.7);
+          ai.mistakeRate = prof.mistakeRate * (0.6 + Math.random() * 0.8);
+          ai.wanderPhase = Math.random() * Math.PI * 2;
+          ai.mistakeTimer = 2 + Math.random() * 5;
+          ai.mistakeActive = 0;
+
           ai.t = 0;
-          ai.lat = AI_START_LATS[i];
-          ai.targetLat = AI_START_LATS[i];
+          ai.lat = Math.max(-9, Math.min(9, AI_START_LATS[i] + (Math.random() - 0.5) * 1.2));
+          ai.targetLat = ai.lat;
           ai.v = 0;
           ai.laps = 0;
           ai.steerVisual = 0;
@@ -3865,47 +3897,65 @@
           const ai = AI_CARS[i];
           const idx = Math.max(0, Math.min(n - 1, Math.round(ai.t * n)));
           const r = trackLut.radius[idx];
-          const vLimit = Math.max(10, corneringSpeed(ai.car.spec, r));
+          // skill 决定弯道极限：激进型敢带更高速度入弯，飘忽型略保守
+          const vLimit = Math.max(10, corneringSpeed(ai.car.spec, r) * ai.skill);
           let sf = 1;
 
-          // 1. 贪心避障：前方约 110m 内最近且横向接近的障碍 → 提前绕到外侧
-          let nearestDt = 0.055;
+          // 车道游摆：正弦漂移让每台车走线各不相同、且每局不同
+          ai.wanderPhase += delta * (0.6 + 0.5 * ai.aggression);
+          const wander = Math.sin(ai.wanderPhase) * ai.wanderAmp;
+
+          // 1+2. 单趟遍历障碍：同时求“最近需避让障碍”与“前方密集度”
+          //      判活用 removed，不依赖 visible（visible 已被玩家距离剔除复用为渲染标记）
+          //      caution 越高 → 探测窗口越早、减速越深
+          const lookDt = 0.05 + 0.02 * ai.caution;
+          let nearestDt = lookDt;
           let nearestLat = null;
+          let dense = 0;
           for (let j = 0; j < activeObstacles.length; j++) {
             const obs = activeObstacles[j];
-            if (!obs.visible) continue;
+            if (obs.userData.removed) continue;
             const dt = obs.userData.t - ai.t;
-            if (dt < 0 || dt > nearestDt) continue;
-            if (Math.abs(obs.userData.lat - ai.lat) < 3.0) {
+            if (dt < 0 || dt > lookDt) continue;
+            if (dt < 0.05) dense++;
+            if (dt <= nearestDt && Math.abs(obs.userData.lat - ai.lat) < 3.0) {
               nearestDt = dt;
               nearestLat = obs.userData.lat;
             }
           }
+
           if (nearestLat !== null) {
+            // 绕到障碍外侧，横移量随 dodgeGain 个性化；越近减速越明显（caution 放大）
             const side = nearestLat >= ai.lat ? 1 : -1;
-            ai.targetLat = Math.max(-8.5, Math.min(8.5, nearestLat + side * 4.4));
-            sf *= 0.9 + 0.1 * (nearestDt / 0.055);
+            ai.targetLat = nearestLat + side * 4.4 * ai.dodgeGain;
+            sf *= 1 - (0.12 * ai.caution) * (1 - nearestDt / lookDt);
           } else {
-            ai.targetLat = 0;
+            // 无障碍 → 回到各自巡航车道 + 游摆（避免三车叠在中心线）
+            ai.targetLat = ai.cruiseLat + wander;
+          }
+          if (dense >= 3) sf *= 1 - 0.22 * ai.caution;   // 密集危险段：谨慎型减速更多
+
+          // 3. 随机失误：周期性掷骰，命中则短暂松油/摆头，打破机械感
+          ai.mistakeTimer -= delta;
+          if (ai.mistakeTimer <= 0) {
+            ai.mistakeTimer = 3 + Math.random() * 6;
+            if (Math.random() < ai.mistakeRate) ai.mistakeActive = 0.6 + Math.random() * 0.9;
+          }
+          if (ai.mistakeActive > 0) {
+            ai.mistakeActive -= delta;
+            sf *= 0.72;
+            ai.targetLat += Math.sin(ai.wanderPhase * 3.1) * 2.0;   // 失误摆头
           }
 
-          // 2. 高密度危险段（走廊/窄道）额外减速，玩家可趁机超车
-          let dense = 0;
-          for (let j = 0; j < activeObstacles.length; j++) {
-            const obs = activeObstacles[j];
-            if (!obs.visible) continue;
-            const dt = obs.userData.t - ai.t;
-            if (dt >= 0 && dt < 0.05) dense++;
-          }
-          if (dense >= 3) sf *= 0.78;
-
-          // 3. 相对玩家调速：落后追近、领先放水，保持竞争张力
+          // 4. 相对玩家调速：rubber 越大越在意差距（激进型咬得紧、稳健型更放松）
           const gap = pProg - (ai.laps + ai.t);
-          if (gap > 0.015) sf *= 1.06;
-          else if (gap < -0.015) sf *= 0.94;
+          const band = 0.06 * ai.rubber;
+          if (gap > 0.015) sf *= 1 + band;
+          else if (gap < -0.015) sf *= 1 - band;
 
-          // 4. 速度积分与进度推进（v 以 ≤14 m/s² 爬升，从起跑格平稳起步）
-          const targetV = Math.min(vLimit * 0.94 * sf, ai.v + 14 * delta);
+          // 5. 速度积分与进度推进：aggression 决定加速凶狠程度
+          ai.targetLat = Math.max(-8.5, Math.min(8.5, ai.targetLat));
+          const targetV = Math.min(vLimit * 0.94 * sf, ai.v + 14 * ai.aggression * delta);
           ai.v += (targetV - ai.v) * Math.min(1, delta * 1.4);
           ai.v = Math.max(0, ai.v);
           ai.t += (ai.v / trackLen) * delta;
