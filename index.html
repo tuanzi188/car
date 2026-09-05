@@ -826,9 +826,11 @@
        */
 
       // 车辆型号规格。maxSpeed 即"满油门稳态极速"，由动力衰减模型直接保证可达。
+      // 视觉参数（rimColor/drlColor/nitroColor）驱动选车后整车配色联动。
       const VEHICLES = {
         veneno: {
-          label: '毒药 (Veneno GT)', color: 0x00f0ff,
+          id: 'veneno', label: '毒药 (Veneno GT)', color: 0x00f0ff,
+          rimColor: 0x242b35, drlColor: 0x00f0ff, nitroColor: 0x00f0ff,
           maxSpeed: 95, accelRate: 13.0, brakeRate: 34,
           latGripBase: 16.0,   // 基础横向抓地加速度 (m/s²)，约 1.6g
           latGripDownforce: 0.0009, // 下压力系数：a_lat += k·v²，高速时转向依然咬地
@@ -836,7 +838,8 @@
           wheelbase: 2.90,     // 轴距（米），与 wheelOffsets 实测一致
         },
         gt3: {
-          label: '烈马 (Phantom GT3)', color: 0xffaa00,
+          id: 'gt3', label: '烈马 (Phantom GT3)', color: 0xffaa00,
+          rimColor: 0xd4af37, drlColor: 0xffd27a, nitroColor: 0xff8a1e,
           maxSpeed: 86, accelRate: 12.2, brakeRate: 34,
           latGripBase: 18.0, latGripDownforce: 0.0006,
           powerTaper: 0.80, wheelbase: 2.68,
@@ -855,6 +858,9 @@
       };
       const KERB_BAND = 1.2;          // 路肩缓冲带宽（米）
       const GRASS_BAND = 9.0;         // 草地缓冲区宽度（米），超出即为硬性护栏
+      // 尾灯配色（刹车灯联动：常态暗红示廓，刹车平滑增亮）
+      const TAIL_COLOR_IDLE = new THREE.Color(0x7a0026);
+      const TAIL_COLOR_BRAKE = new THREE.Color(0xff3050);
       const REVERSE_LIMIT = 14;       // 最大倒车速度（米/秒）
       const NITRO_DRAIN = 26;         // 氮气每秒消耗
       const NITRO_REGEN = 6;          // 氮气每秒回复
@@ -2000,7 +2006,7 @@
         headR.rotation.y = 0.22;
 
         // 日间行车灯导光带 (Daytime Running Light Bars)
-        const drlMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+        const drlMat = new THREE.MeshBasicMaterial({ color: spec.drlColor });
         const drlGeo = new THREE.BoxGeometry(0.38, 0.03, 0.08);
         const drlL = new THREE.Mesh(drlGeo, drlMat);
         drlL.position.set(-0.78, 0.46, -2.25);
@@ -2011,7 +2017,7 @@
         carGroup.add(headL, headR, drlL, drlR);
 
         // 7. 全宽贯穿式霓虹流光 LED 尾灯 (Full-width LED Lightbar)
-        const tailMat = new THREE.MeshBasicMaterial({ color: 0xff0038 });
+        const tailMat = new THREE.MeshBasicMaterial({ color: TAIL_COLOR_IDLE.getHex() });
         const tailBar = new THREE.Mesh(new THREE.BoxGeometry(1.96, 0.06, 0.08), tailMat);
         tailBar.position.set(0, 0.62, 2.24);
 
@@ -2164,6 +2170,7 @@
         return {
           mesh: carGroup,
           paintMat: paintMat,
+          tailMat: tailMat, // 尾灯材质（刹车灯联动）
           wheels: wheels,
           nitroFlame: flameL, // 引用主火焰材质用于统一控制透明度
           nitroGroup: nitroGroup,
@@ -2375,6 +2382,12 @@
         car.nitroFlame.material.opacity = car.isNitroActive ? 0.85 : 0;
         if (car.nitroGroup) {
           car.nitroGroup.scale.z = car.isNitroActive ? 1 + Math.random() * 0.5 : 0.001;
+        }
+
+        // 刹车灯联动：常态暗红示廓，刹车/手刹时平滑增亮（帧率无关指数平滑）
+        if (car.tailMat) {
+          const tailT = targetBrake > 0 ? TAIL_COLOR_BRAKE : TAIL_COLOR_IDLE;
+          car.tailMat.color.lerp(tailT, 1 - Math.pow(0.02, delta));
         }
 
         const grip = surface.grip;
