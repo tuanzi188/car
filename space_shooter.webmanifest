@@ -1,0 +1,25 @@
+{
+  "name": "巅峰极速 3D - 极限突围闪避",
+  "short_name": "巅峰极速",
+  "description": "3D 物理赛车 · 极限闪避突围",
+  "start_url": "space_shooter.html",
+  "scope": ".",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#050811",
+  "theme_color": "#050811",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

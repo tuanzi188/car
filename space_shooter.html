@@ -1,0 +1,3339 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#050811">
+  <!-- PWA：添加到主屏幕后全屏无浏览器头；微信内无法全屏，见竖屏遮罩指引 -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="巅峰极速 3D">
+  <link rel="manifest" href="space_shooter.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>巅峰极速 3D - 极限突围闪避</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050811;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      color: #fff;
+    }
+    #game-container {
+      width: 100vw;
+      height: 100vh;
+      height: 100dvh; /* iOS 动态地址栏收起时避免底部按钮被推出可视区 */
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 1;
+      touch-action: none;
+    }
+
+    /* HUD 顶层 */
+    .hud {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      pointer-events: none;
+      display: none;
+    }
+    .hud.active { display: block; }
+
+    /* 左上角：生存积分与行车里程 */
+    .timing-panel {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      left: max(16px, env(safe-area-inset-left));
+      background: rgba(10, 16, 28, 0.85);
+      border: 1px solid rgba(0, 240, 255, 0.35);
+      border-radius: 12px;
+      padding: 12px 18px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+      min-width: 190px;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 4px;
+    }
+    .mode-label {
+      font-size: 10px;
+      font-weight: 800;
+      color: #00f0ff;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+    }
+    .score-display {
+      font-size: 26px;
+      font-weight: 900;
+      font-family: "Courier New", Courier, monospace;
+      color: #ffffff;
+      letter-spacing: 1px;
+      text-shadow: 0 0 10px rgba(0, 240, 255, 0.5);
+    }
+    .sub-timing {
+      font-size: 11px;
+      color: #94a3b8;
+      display: flex;
+      justify-content: space-between;
+      margin-top: 3px;
+    }
+
+    /* 右上角：战损耐久与路面状态 */
+    .drift-panel {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      right: max(16px, env(safe-area-inset-right));
+      background: rgba(10, 16, 28, 0.85);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      padding: 12px 18px;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      text-align: right;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.6);
+      min-width: 170px;
+    }
+    .pos-title { font-size: 9px; color: #94a3b8; text-transform: uppercase; }
+    .durability-bar-wrap {
+      width: 130px;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 4px;
+      margin: 6px 0 4px auto;
+      overflow: hidden;
+    }
+    .durability-bar-fill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #00ff88, #00f0ff);
+      transition: width 0.2s ease, background 0.3s;
+    }
+    .durability-bar-fill.critical { background: linear-gradient(90deg, #ff0055, #ff3366); }
+    .durability-val {
+      font-size: 16px;
+      font-weight: 900;
+      color: #00ff88;
+    }
+    .durability-val.critical { color: #ff3366; }
+    .surface-tag {
+      font-size: 10px;
+      font-weight: 800;
+      color: #00f0ff;
+      margin-top: 4px;
+    }
+    .surface-tag.grass { color: #84cc16; }
+    .surface-tag.kerb { color: #f97316; }
+    .danger-alert {
+      color: #ff3366;
+      font-size: 11px;
+      font-weight: 800;
+      display: none;
+      text-shadow: 0 0 8px #ff3366;
+      margin-top: 4px;
+    }
+    .danger-alert.show { display: block; }
+
+    /* 右下角：超跑数字仪表盘 */
+    .dashboard-cluster {
+      position: absolute;
+      bottom: max(20px, env(safe-area-inset-bottom));
+      right: max(20px, env(safe-area-inset-right));
+      width: 170px;
+      height: 170px;
+      background: radial-gradient(circle, rgba(12, 20, 36, 0.88) 0%, rgba(6, 10, 18, 0.95) 100%);
+      border: 2px solid rgba(0, 240, 255, 0.3);
+      border-radius: 50%;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8), inset 0 0 20px rgba(0, 240, 255, 0.12);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      pointer-events: none;
+    }
+    .gear-display {
+      font-size: 15px;
+      font-weight: 900;
+      color: #ffaa00;
+      margin-bottom: -4px;
+    }
+    .speed-number {
+      font-size: 46px;
+      font-weight: 900;
+      color: #ffffff;
+      line-height: 1;
+      letter-spacing: -1px;
+      text-shadow: 0 0 15px rgba(0, 240, 255, 0.6);
+    }
+    .speed-unit {
+      font-size: 11px;
+      font-weight: 700;
+      color: #64748b;
+      letter-spacing: 1px;
+      margin-top: -2px;
+    }
+    .gforce-text {
+      font-size: 9px;
+      font-weight: 800;
+      color: #00f0ff;
+      margin-top: 2px;
+    }
+    .nitro-gauge-wrap {
+      width: 100px;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.15);
+      border-radius: 3px;
+      margin-top: 6px;
+      overflow: hidden;
+    }
+    .nitro-gauge-fill {
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(90deg, #00f0ff, #00ff88);
+      transition: width 0.1s linear;
+    }
+
+    /* 顶部中间：视角切换与音效按键 */
+    .top-controls {
+      position: absolute;
+      top: max(16px, env(safe-area-inset-top));
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .cam-btn {
+      background: rgba(10, 16, 28, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: 11px;
+      font-weight: 700;
+      color: #cbd5e1;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      transition: all 0.2s;
+    }
+    .cam-btn:active { transform: scale(0.94); background: rgba(0, 240, 255, 0.2); }
+
+    /* PC 端控制指南栏 */
+    .pc-controls-bar {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(8, 14, 24, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 20px;
+      padding: 6px 20px;
+      font-size: 11px;
+      color: #94a3b8;
+      backdrop-filter: blur(8px);
+      white-space: nowrap;
+    }
+    .key-badge {
+      display: inline-block;
+      padding: 1px 6px;
+      margin: 0 2px;
+      background: rgba(255, 255, 255, 0.16);
+      border-radius: 4px;
+      color: #fff;
+      font-weight: 600;
+    }
+
+    /* 移动端手势触控群（人体工学扇形弧度布局） */
+    .mobile-touch-left {
+      position: absolute;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      left: max(18px, env(safe-area-inset-left));
+      display: none;
+      align-items: flex-end;
+      gap: 14px;
+      pointer-events: auto;
+      z-index: 15;
+    }
+    .touch-steer-btn {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: rgba(10, 18, 32, 0.82);
+      border: 2px solid rgba(0, 240, 255, 0.45);
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5), inset 0 0 12px rgba(0, 240, 255, 0.15);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 26px;
+      color: #00f0ff;
+      touch-action: none;
+      transition: background 0.1s, transform 0.1s, border-color 0.1s;
+    }
+    .touch-steer-btn.pressed {
+      background: rgba(0, 240, 255, 0.35);
+      border-color: #00f0ff;
+      transform: scale(0.92);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.6);
+    }
+    .mobile-touch-right {
+      position: absolute;
+      bottom: max(18px, env(safe-area-inset-bottom));
+      right: max(18px, env(safe-area-inset-right));
+      display: none;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 10px;
+      pointer-events: auto;
+      z-index: 15;
+    }
+    .pedal-sub-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .touch-pedal-btn {
+      border-radius: 16px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      color: #fff;
+      touch-action: none;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+      transition: transform 0.1s, filter 0.1s, box-shadow 0.1s;
+    }
+    .touch-pedal-btn.pressed {
+      transform: scale(0.92);
+      filter: brightness(1.45);
+      box-shadow: 0 0 22px rgba(255, 255, 255, 0.5);
+    }
+    .pedal-gas {
+      width: 74px;
+      height: 74px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, #00ff88, #009955);
+      border: 2px solid #00ff88;
+      font-size: 13px;
+    }
+    .pedal-brake {
+      width: 66px;
+      height: 60px;
+      background: linear-gradient(135deg, #ff3366, #b01035);
+      border: 2px solid #ff3366;
+    }
+    .pedal-handbrake {
+      width: 60px;
+      height: 52px;
+      background: linear-gradient(135deg, #f59e0b, #b45309);
+      border: 2px solid #f59e0b;
+      font-size: 10px;
+    }
+    .pedal-nitro {
+      width: 66px;
+      height: 52px;
+      background: linear-gradient(135deg, #00f0ff, #0066cc);
+      border: 2px solid #00f0ff;
+    }
+
+    /* 模态大屏：大厅车库与玩法说明 */
+    .screen-modal {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(circle at center, rgba(14, 24, 48, 0.9) 0%, rgba(4, 8, 16, 0.98) 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 30;
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      padding: 24px;
+      overflow-y: auto;
+    }
+    .screen-modal.hidden { display: none; }
+
+    .game-logo {
+      font-size: clamp(32px, 7vw, 54px);
+      font-weight: 900;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      font-style: italic;
+      background: linear-gradient(135deg, #00f0ff 0%, #ffffff 50%, #ff3366 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 30px rgba(0, 240, 255, 0.4);
+      margin-bottom: 4px;
+    }
+    .game-slogan {
+      font-size: clamp(12px, 3.5vw, 15px);
+      color: #94a3b8;
+      letter-spacing: 2px;
+      margin-bottom: 24px;
+      text-align: center;
+    }
+
+    /* 玩法任务卡 */
+    .mission-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(0, 240, 255, 0.25);
+      border-radius: 12px;
+      padding: 16px 20px;
+      max-width: 680px;
+      width: 100%;
+      margin-bottom: 20px;
+      text-align: center;
+    }
+    .mission-title {
+      font-size: 14px;
+      font-weight: 800;
+      color: #00f0ff;
+      margin-bottom: 6px;
+      letter-spacing: 1px;
+    }
+    .mission-desc {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.6;
+    }
+
+    /* 赛车展台选车器 */
+    .car-selector {
+      display: flex;
+      gap: 14px;
+      margin-bottom: 26px;
+      max-width: 680px;
+      width: 100%;
+    }
+    .car-card {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 12px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.25s ease;
+      text-align: center;
+    }
+    .car-card:focus-visible { outline: 2px solid #00f0ff; outline-offset: 2px; }
+    .car-card.active {
+      border-color: #00f0ff;
+      background: rgba(0, 240, 255, 0.12);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.35);
+      transform: translateY(-3px);
+    }
+    .car-name { font-size: 15px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+    .car-specs { font-size: 11px; color: #94a3b8; line-height: 1.4; }
+
+    .race-start-btn {
+      padding: 14px 54px;
+      font-size: 18px;
+      font-weight: 900;
+      color: #040810;
+      background: linear-gradient(90deg, #00f0ff, #00ff88);
+      border: none;
+      border-radius: 30px;
+      cursor: pointer;
+      box-shadow: 0 0 25px rgba(0, 240, 255, 0.6);
+      letter-spacing: 1.5px;
+      transition: all 0.2s;
+    }
+    .race-start-btn:hover { transform: scale(1.05); }
+    .race-start-btn:focus-visible { outline: 3px solid #ffffff; outline-offset: 3px; }
+
+    /* 大厅历史最高分 */
+    .lobby-best {
+      font-size: 12px;
+      font-weight: 700;
+      color: #ffaa00;
+      letter-spacing: 1px;
+      margin-bottom: 22px;
+      text-shadow: 0 0 10px rgba(255, 170, 0, 0.35);
+    }
+
+    /* 连击倍率徽标 */
+    .combo-badge {
+      position: absolute;
+      top: 96px;
+      left: 50%;
+      transform: translateX(-50%) scale(0.85);
+      padding: 6px 20px;
+      border-radius: 22px;
+      background: linear-gradient(90deg, rgba(255, 170, 0, 0.92), rgba(255, 51, 102, 0.92));
+      color: #0a0f18;
+      font-size: 17px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      opacity: 0;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      box-shadow: 0 0 22px rgba(255, 170, 0, 0.55);
+    }
+    .combo-badge.show { opacity: 1; transform: translateX(-50%) scale(1); }
+
+    /* 暂停遮罩 */
+    .pause-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 28;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      background: rgba(4, 8, 16, 0.72);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+      pointer-events: auto;
+      cursor: pointer;
+      touch-action: none;
+    }
+    .pause-overlay.show { display: flex; }
+    .pause-overlay h2 { font-size: 34px; font-weight: 900; letter-spacing: 6px; color: #00f0ff; }
+    .pause-overlay p { font-size: 13px; color: #cbd5e1; letter-spacing: 1px; }
+    .pause-overlay .pause-sub { font-size: 11px; color: #64748b; }
+    .pause-overlay:active { background: rgba(4, 8, 16, 0.55); }
+
+    /* 移动端强制横屏锁屏遮罩 */
+    .portrait-tip {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 9999;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 16px;
+      padding: 32px;
+      text-align: center;
+      background: radial-gradient(circle at center, rgba(16, 24, 48, 0.98) 0%, rgba(4, 8, 16, 1.0) 100%);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      pointer-events: auto;
+    }
+    .rotate-icon {
+      font-size: 58px;
+      filter: drop-shadow(0 0 16px rgba(0, 240, 255, 0.6));
+      animation: rotate-phone 2.0s ease-in-out infinite;
+    }
+    @keyframes rotate-phone {
+      0%, 15% { transform: rotate(0deg); }
+      50%, 65% { transform: rotate(-90deg); }
+      85%, 100% { transform: rotate(0deg); }
+    }
+    .portrait-tip h3 {
+      font-size: 22px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      color: #00f0ff;
+      text-shadow: 0 0 15px rgba(0, 240, 255, 0.4);
+    }
+    .portrait-tip p {
+      font-size: 14px;
+      color: #cbd5e1;
+      line-height: 1.8;
+      max-width: 320px;
+    }
+    .portrait-tip .tip-sub {
+      font-size: 12px;
+      color: #94a3b8;
+    }
+    /* 微信内置浏览器专属指引：微信内无法全屏/锁定横屏，只能引导外跳 */
+    .wechat-tip {
+      display: none;
+      max-width: 340px;
+      margin-top: 10px;
+      padding: 10px 14px;
+      border: 1px solid rgba(250, 204, 21, 0.55);
+      border-radius: 10px;
+      background: rgba(250, 204, 21, 0.08);
+      color: #fde68a;
+      font-size: 12px;
+      line-height: 1.8;
+      text-align: left;
+    }
+    .wechat-tip.show { display: block; }
+    .wechat-tip b { color: #fbbf24; }
+
+    /* 引擎初始化失败降级提示 */
+    .fatal-screen {
+      position: absolute;
+      inset: 0;
+      z-index: 60;
+      display: none;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      padding: 32px;
+      text-align: center;
+      background: #050811;
+    }
+    .fatal-screen.show { display: flex; }
+    .fatal-screen h2 { font-size: 20px; color: #ff3366; letter-spacing: 1px; }
+    .fatal-screen p { font-size: 13px; color: #94a3b8; line-height: 1.8; max-width: 460px; }
+
+    /* 触屏设备显示触控按钮：按触控能力判定，避免大屏手机/平板横屏时按钮消失 */
+    @media (hover: none) and (pointer: coarse) {
+      .pc-controls-bar { display: none !important; }
+      .mobile-touch-left, .mobile-touch-right { display: flex !important; }
+    }
+
+    @media (max-width: 900px) {
+      .car-selector { flex-direction: column; max-width: 320px; }
+
+      /* 移动端 HUD 尺寸与安全区深度优化，避免遮挡前方视界 */
+      .timing-panel {
+        min-width: 140px;
+        padding: 8px 12px;
+        border-radius: 10px;
+      }
+      .score-display { font-size: 19px; }
+      .sub-timing { font-size: 10px; }
+
+      .drift-panel {
+        min-width: 125px;
+        padding: 8px 12px;
+        border-radius: 10px;
+      }
+      .durability-bar-wrap { width: 90px; height: 6px; }
+      .durability-val { font-size: 14px; }
+      .surface-tag { font-size: 9px; }
+
+      .top-controls {
+        top: max(10px, env(safe-area-inset-top));
+        gap: 6px;
+      }
+      .cam-btn {
+        padding: 5px 12px;
+        font-size: 10px;
+      }
+
+      /* 移动端仪表盘缩小并居中或偏置避让手指 */
+      .dashboard-cluster {
+        width: 110px;
+        height: 110px;
+        bottom: max(14px, env(safe-area-inset-bottom));
+        right: 50%;
+        transform: translateX(50%);
+        opacity: 0.92;
+        border-width: 1.5px;
+      }
+      .speed-number { font-size: 28px; }
+      .speed-unit { font-size: 9px; }
+      .gear-display { font-size: 12px; }
+      .gforce-text { display: none; }
+      .nitro-gauge-wrap { width: 70px; height: 4px; margin-top: 4px; }
+    }
+
+    /* 超小屏（如 iPhone SE / 小型折叠屏）自适应微调 */
+    @media (max-width: 480px) {
+      .touch-steer-btn { width: 62px; height: 62px; font-size: 22px; }
+      .pedal-gas { width: 64px; height: 64px; font-size: 11px; }
+      .pedal-brake { width: 56px; height: 52px; font-size: 10px; }
+      .pedal-nitro, .pedal-handbrake { width: 56px; height: 44px; font-size: 9px; }
+      .dashboard-cluster { width: 96px; height: 96px; }
+      .speed-number { font-size: 24px; }
+    }
+
+    /* 竖屏且为移动端/触屏时强制锁定横屏 */
+    @media (orientation: portrait) and (max-width: 1024px) {
+      .portrait-tip { display: flex !important; }
+    }
+  </style>
+  <!-- Three.js 三级回退：主 CDN → 备用 CDN → 本地文件。
+       每级为独立 script 块，document.write 只需一层 <\/script> 转义，
+       避免嵌套字符串转义在解析期产生提前闭合。 -->
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"><\/script>');
+    }
+  </script>
+  <script>
+    if (typeof THREE === 'undefined') {
+      document.write('<script src="three.local.js"><\/script>');
+    }
+  </script>
+</head>
+<body>
+
+  <div id="game-container"></div>
+
+  <!-- 1. 游戏主菜单 / 赛事大厅 -->
+  <div class="screen-modal" id="start-screen">
+    <div class="game-logo">巅峰极速 3D</div>
+    <div class="game-slogan">极限闪避突围 · 真实物理赛车</div>
+
+    <!-- 核心目标玩法卡 -->
+    <div class="mission-card">
+      <div class="mission-title">⚠️ 极限突围使命</div>
+      <div class="mission-desc">
+        在高速赛道中全力奔驰，<b>敏捷闪避施工水马、反光油桶与破损路段</b>！<br>
+        每次撞击严重损耗车辆耐久；<b>连续无伤闪避累积连击倍率</b>，<br>
+        与障碍<b>贴身擦过</b>可获得额外高分并<b>回充少量耐久</b> —— 越贪越赚，也越险。
+      </div>
+    </div>
+
+    <!-- 赛车展台选车器 -->
+    <div class="car-selector" role="group" aria-label="选择赛车">
+      <div class="car-card active" id="car-veneno" role="button" tabindex="0" data-vehicle="veneno">
+        <div class="car-name">⚡ 毒药 (Veneno GT)</div>
+        <div class="car-specs">实测极速 342 公里/小时 · 0-100 约 2.5 秒<br>开阔弯与直道尾速占优 · 下压力随速增长</div>
+      </div>
+      <div class="car-card" id="car-gt3" role="button" tabindex="0" data-vehicle="gt3">
+        <div class="car-name">🏁 烈马 (Phantom GT3)</div>
+        <div class="car-specs">实测极速 310 公里/小时 · 横向抓地 1.9g<br>半径 180 米以内的紧弯更快 · 漂移宽容度高</div>
+      </div>
+    </div>
+
+    <div class="lobby-best" id="lobby-best">尚无记录 · 去创造第一个成绩</div>
+
+    <button class="race-start-btn" id="start-btn">点 火 发 车</button>
+  </div>
+
+  <!-- 2. 竞赛全息 HUD -->
+  <div class="hud" id="hud">
+    <!-- 积分面板 -->
+    <div class="timing-panel">
+      <div class="panel-header">
+        <div class="mode-label">障碍极速闪避模式</div>
+      </div>
+      <div class="score-display" id="hud-score">0 分</div>
+      <div class="sub-timing">
+        <span>里程: <b id="hud-distance">0 米</b></span>
+        <span>闪避障碍: <b id="hud-evaded">0</b></span>
+      </div>
+      <div class="best-line" id="hud-best"></div>
+    </div>
+
+    <!-- 耐久与路面状态 -->
+    <div class="drift-panel">
+      <div class="pos-title">车辆战损耐久</div>
+      <div class="durability-bar-wrap">
+        <div class="durability-bar-fill" id="hud-durability-fill"></div>
+      </div>
+      <div class="durability-val" id="hud-durability-val">100%</div>
+      <div class="surface-tag" id="hud-surface-tag">沥青路面</div>
+      <div class="danger-alert" id="hud-danger-alert">⚠️ 撞击警报!</div>
+    </div>
+
+    <!-- 连击倍率徽标（居中偏上，避开前方视界） -->
+    <div class="combo-badge" id="hud-combo"></div>
+
+    <!-- 顶部视角切换与音效 -->
+    <div class="top-controls">
+      <button class="cam-btn" id="cam-toggle-btn">📷 视角: 第三人称 (追随)</button>
+      <button class="cam-btn" id="audio-toggle-btn" aria-pressed="false">🔊 音效</button>
+    </div>
+
+    <!-- PC 控制说明 -->
+    <div class="pc-controls-bar">
+      <span class="key-badge">W / ↑</span> 油门 · <span class="key-badge">S / ↓</span> 刹车倒车 · <span class="key-badge">A / D</span> 紧急变道闪避 · <span class="key-badge">空格</span> 手刹漂移 · <span class="key-badge">SHIFT</span> 氮气加速 · <span class="key-badge">C</span> 切换视角 · <span class="key-badge">M</span> 静音
+    </div>
+
+    <!-- 移动端触控按键（左手转向，右手组合油门/刹车/手刹/氮气） -->
+    <div class="mobile-touch-left" id="touch-controls-left">
+      <div class="touch-steer-btn" id="btn-steer-left" aria-label="左转">◀</div>
+      <div class="touch-steer-btn" id="btn-steer-right" aria-label="右转">▶</div>
+    </div>
+
+    <div class="mobile-touch-right" id="touch-controls-right">
+      <div class="pedal-sub-row">
+        <div class="touch-pedal-btn pedal-nitro" id="btn-nitro" aria-label="氮气加速">氮气</div>
+        <div class="touch-pedal-btn pedal-handbrake" id="btn-handbrake" aria-label="手刹漂移">漂移</div>
+      </div>
+      <div class="pedal-sub-row">
+        <div class="touch-pedal-btn pedal-brake" id="btn-brake" aria-label="刹车倒车">刹车</div>
+        <div class="touch-pedal-btn pedal-gas" id="btn-gas" aria-label="油门加速">油门</div>
+      </div>
+    </div>
+
+    <!-- 右下角超跑仪表盘 -->
+    <div class="dashboard-cluster">
+      <div class="gear-display" id="hud-gear">1 挡</div>
+      <div class="speed-number" id="hud-speed">0</div>
+      <div class="speed-unit">公里/小时</div>
+      <div class="gforce-text" id="hud-gforce">0.0 重力加速度</div>
+      <div class="nitro-gauge-wrap">
+        <div class="nitro-gauge-fill" id="hud-nitro-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. 游戏结束结算弹窗 -->
+  <div class="screen-modal hidden" id="game-over-modal">
+    <div class="game-logo" id="finish-title" style="font-size: 40px;">车辆报废</div>
+    <div class="game-slogan" id="finish-desc">车辆受损严重，无法继续行驶！</div>
+    <div style="font-size: 15px; color: #cbd5e1; margin-bottom: 24px; line-height: 1.8; text-align: center;" id="finish-stats">
+      最终总得分: 0 分<br>
+      突围总里程: 0 米<br>
+      成功闪避障碍: 0 处
+    </div>
+    <button class="race-start-btn" id="restart-btn">返回赛事大厅</button>
+  </div>
+
+  <!-- 4. 移动端强制横屏锁定遮罩 -->
+  <div class="portrait-tip" id="portrait-tip">
+    <div class="rotate-icon">📱</div>
+    <h3>请将手机旋转至横屏</h3>
+    <p>巅峰极速 3D 采用专业超跑双侧触控布局，<br><b>必须在横屏模式下畅玩</b>。</p>
+    <div class="tip-sub">若已开启系统“方向锁定”，请前往控制中心先解除锁定。</div>
+    <div class="wechat-tip" id="wechat-tip">检测到微信内置浏览器：微信内无法锁定横屏或全屏。请点右上角 <b>···</b> → <b>在浏览器打开</b>；打开后若仍见浏览器地址栏，再点 <b>分享/菜单 → 添加到主屏幕</b>，从桌面图标进入即可全屏畅玩。</div>
+  </div>
+
+  <!-- 4b. 暂停遮罩（点击任意处 / Esc / P 恢复，兼容移动端无键盘） -->
+  <div class="pause-overlay" id="pause-overlay" role="button" tabindex="0" aria-label="点击继续比赛">
+    <h2>已暂停</h2>
+    <p>点击屏幕任意处继续比赛</p>
+    <p class="pause-sub">（或按 Esc / P 键）</p>
+  </div>
+
+  <!-- 5. 引擎不可用降级提示 -->
+  <div class="fatal-screen" id="fatal-screen">
+    <h2>3D 引擎加载失败</h2>
+    <p>无法获取 Three.js 运行库。请检查网络连接后刷新页面；<br>若处于内网环境，请将 three.min.js 下载后放置于本文件同级目录，命名为 <b>three.local.js</b>，页面会自动加载它。</p>
+  </div>
+
+  <script>
+    /* ============================================================================
+     * Apex Drift 3D — 极限突围闪避
+     * 模块分区：0.配置常量 / 1.工具与内存池 / 2.赛道构建 / 3.障碍物系统
+     *          4.粒子特效 / 5.车辆模型 / 6.场景初始化 / 7.物理与碰撞
+     *          8.摄像机 / 9.HUD / 10.输入 / 11.音频 / 12.赛事状态 / 13.主循环
+     * 全部逻辑封装于 IIFE 闭包内，不向 window 暴露可变游戏状态。
+     * ========================================================================== */
+    (function () {
+      'use strict';
+
+      /* ---------------------- 0. 配置常量 ---------------------- */
+      if (typeof THREE === 'undefined') {
+        document.getElementById('fatal-screen').classList.add('show');
+        document.getElementById('start-screen').classList.add('hidden');
+        return;
+      }
+
+      const isMobileDevice = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || window.innerWidth <= 768;
+
+      /* 量纲约定（全系统统一为"每秒"，禁止再引入任何"每 60fps 帧"系数）：
+       *   速度 m/s · 加速度 m/s² · 阻尼 1/s · 角度 rad · 时间 s
+       * 所有与帧率相关的换算一律走 dampByDelta() 或 Math.pow(x, delta)。
+       */
+
+      // 车辆型号规格。maxSpeed 即"满油门稳态极速"，由动力衰减模型直接保证可达。
+      const VEHICLES = {
+        veneno: {
+          label: '毒药 (Veneno GT)', color: 0x00f0ff,
+          maxSpeed: 95, accelRate: 13.0, brakeRate: 34,
+          latGripBase: 16.0,   // 基础横向抓地加速度 (m/s²)，约 1.6g
+          latGripDownforce: 0.0009, // 下压力系数：a_lat += k·v²，高速时转向依然咬地
+          powerTaper: 0.82,    // 动力随速衰减率，决定极速逼近曲线
+          wheelbase: 2.90,     // 轴距（米），与 wheelOffsets 实测一致
+        },
+        gt3: {
+          label: '烈马 (Phantom GT3)', color: 0xffaa00,
+          maxSpeed: 86, accelRate: 12.2, brakeRate: 34,
+          latGripBase: 18.0, latGripDownforce: 0.0006,
+          powerTaper: 0.80, wheelbase: 2.68,
+        },
+      };
+
+      /* 路面类型表。
+       *   grip      = 抓地力系数，同时缩放纵向动力与横向可获取加速度
+       *   drag      = 纵向空气/滚阻阻尼 (1/s)，v' = -drag·v，用于路面自惩罚
+       *   latDamp   = 横向速度对齐速率 (1/s)，越小越容易侧滑（漂移/草地失控）
+       */
+      const SURFACES = {
+        tarmac: { label: '沥青路面 (100% 抓地力)', cls: 'surface-tag',      grip: 1.00, drag: 0.020, latDamp: 9.0, jitter: 0.00, jitterHz: 0 },
+        kerb:   { label: '震动路肩 (88% 抓地力)',  cls: 'surface-tag kerb', grip: 0.88, drag: 0.120, latDamp: 5.5, jitter: 0.04, jitterHz: 0.06 },
+        grass:  { label: '草地失控 (52% 抓地力)',  cls: 'surface-tag grass', grip: 0.52, drag: 0.550, latDamp: 2.6, jitter: 0.08, jitterHz: 0.02 },
+      };
+      const KERB_BAND = 1.2;          // 路肩缓冲带宽（米）
+      const GRASS_BAND = 9.0;         // 草地缓冲区宽度（米），超出即为硬性护栏
+      const REVERSE_LIMIT = 14;       // 最大倒车速度（米/秒）
+      const NITRO_DRAIN = 26;         // 氮气每秒消耗
+      const NITRO_REGEN = 6;          // 氮气每秒回复
+      const NITRO_THROTTLE = 1.38;    // 氮气油门倍率（同时抬升稳态极速）
+      const NITRO_SPEED_BOOST = 1.15; // 氮气极速上限倍率
+      const HANDBRAKE_BRAKE_MULT = 1.6;
+      const HANDBRAKE_LAT_DAMP = 1.5; // 拉手刹时横向对齐速率骤降 → 后轴滑移
+      const STEER_MAX_RAD = 0.56;     // 最大前轮转角（弧度，同时也是视觉极限）
+      const STEER_FILTER_RATE = 14;   // 舵角响应速率 (1/s)
+      const WHEEL_RADIUS = 0.38;      // 车轮半径（米），用于轮速滚动换算
+      const SLIP_DRIFT_MIN = 2.6;     // 横向滑移速度阈值（米/秒），超过判定为漂移
+      const DRIFT_SPEED_FLOOR = 8;    // 漂移判定的最低纵向速度（米/秒），排除原地打轮
+      const GRIP_STEER_HEADROOM = 1.35; // 物理舵角余量：略大于抓地圆所需角度才能触发滑移
+      const NITRO_POWER_TAPER_RELIEF = 0.55; // 氮气状态下动力衰减放宽系数
+      const SUSPENSION_ROLL_RATE = 10;  // 侧倾收敛速率 (1/s)
+      const SUSPENSION_PITCH_RATE = 12; // 俯仰收敛速率 (1/s)
+      const G_FORCE_DIVISOR = 9.8;    // 重力加速度，用于横向 G 值换算
+
+      // 碰撞与计分参数（各变体的伤害/半径/保留率见 OBSTACLE_KINDS）
+      const COLLISION = {
+        EVADE_BACK: 3.0,        // 判定"已驶过"的身后距离（米）
+        EVADE_LATERAL: 7.0,     // 判定"近距离掠过"的横向间隙（米）
+        EVASION_BONUS: 250,     // 成功闪避基础积分（再乘连击倍率）
+        CRITICAL_DURABILITY: 35,// 耐久告警阈值（%）
+        KNOCK_SETTLE: 1.4,      // 被撞障碍倒下动画时长（秒）
+      };
+
+      /* 玩法回路参数：让"贴得越近、连得越久"成为主动的风险-收益选择。 */
+      const GAMEPLAY = {
+        COMBO_WINDOW: 4.0,      // 连击保持时长（秒），超时或撞击则断连
+        COMBO_MAX: 8,           // 连击上限（倍率 = 1 + 连击数）
+        NEAR_MISS_LATERAL: 3.4, // 擦身而过的横向间隙（米），比常规闪避更贴
+        NEAR_MISS_REPAIR: 4,    // 擦身而过回复耐久（%）
+        NEAR_MISS_BONUS: 600,   // 擦身而过额外积分
+        BARRIER_HALF_WIDTH: 1.05, // 车辆半宽（护栏刮擦判定用，米）
+        BARRIER_SPEED_KEEP: 0.90, // 护栏刮擦每帧速度保留（按秒幂运算）
+        BARRIER_DAMAGE_RATE: 14,  // 护栏刮擦耐久损失（%/秒）
+      };
+
+      // 摄像机参数
+      const CAMERA = {
+        baseFov: 60,
+        speedFovGain: 14,       // 满速时的额外 FOV
+        followLerp: 0.16,       // 追随视角阻尼（按 60fps 标定）
+        overheadLerp: 0.10,
+        shakeStartKmh: 200,     // 极速已提升至 342 km/h，震动阈值同步上移
+        shakeRangeKmh: 140,
+        shakeMaxRad: 0.05,
+      };
+
+      // 赛道参数：闭合回环高起伏样条
+      const TRACK_CONFIG = {
+        points: [
+          [0, 0, 0], [120, 2.5, -80], [260, 4.8, -60], [340, 1.2, 100],
+          [280, 0.2, 260], [100, 3.2, 320], [-80, 1.8, 240], [-160, 0.5, 80], [-100, 0.0, -60],
+        ],
+        trackWidth: 26,
+        loftSegments: 480,
+        lutSamples: 1200,       // 赛道中心线预采样数量（用于 O(1) 邻域定位）
+        lutSearchWindow: 60,    // 邻域搜索半窗口（采样点数）
+      };
+
+      const MAX_OBSTACLES = 34;
+      const MAX_SKID_SEGMENTS = isMobileDevice ? 120 : 300;
+      const MAX_SMOKE_PARTICLES = isMobileDevice ? 40 : 100;
+      const SMOKE_OPACITY_STEPS = 8; // 烟雾共享材质分桶数，避免逐粒子克隆材质
+      const HALO_PHASE_STEPS = 6;    // 警示顶灯相位分桶数（修复共享材质互相覆写）
+      const LAMP_OPACITY_BASE = 0.35;
+      const LAMP_OPACITY_AMP = 0.35;
+
+      // 发车倒计时（F1 式逐盏红灯，全灭即放行）
+      const START_LIGHT = { off: 0x1a1f28, red: 0xff0044, green: 0x00ff88 };
+      const COUNTDOWN_STEPS = 4;     // 4 盏灯 = 4 个计时节拍
+      const COUNTDOWN_STEP_SEC = 0.8;
+
+      /* ---------------------- 1. 运行时状态与内存池 ---------------------- */
+      let selectedVehicleType = 'veneno';
+      let cameraViewIndex = 0;
+
+      let scene, camera, renderer;
+      let trackCurve = null;
+      let playerCar = null;
+
+      // 赛道中心线 LUT（Float32Array，避免每帧调用 getPointAt 的高昂曲线求值）
+      // radius[i]：该采样点的曲率半径（米），用于按弯道难度布点与预告提示
+      const trackLut = { pos: null, tan: null, bin: null, radius: null, count: 0, spacing: 0, length: 0 };
+
+      // 障碍物对象池
+      const obstaclePool = [];
+      let activeObstacles = [];
+
+      // 胎印与烟雾粒子
+      let skidmarkLine = null;
+      let skidIndex = 0;
+      const smokeFree = [];
+      const activeSmoke = [];
+      const smokeMaterials = [];
+      const haloPhaseMaterials = [];
+
+      // 障碍预告雷达（前方最近障碍的世界坐标投影）
+      let radarGroup = null;
+      let radarArrows = [];
+      let radarScanIndex = 0;
+
+      // 龙门架发车指示灯灯泡（每盏独立材质，倒计时逐盏点亮）
+      const startLightBulbs = [];
+
+      // 赛事数据
+      let isRacing = false;
+      let isPaused = false;
+      let suppressBlurPause = false; // 全屏/横屏切换瞬间的伪 blur 不计入自动暂停
+      let durability = 100;
+      let totalScore = 0;
+      let scoreAccumulator = 0;   // 浮点积分累加器，杜绝逐帧取整造成的丢分
+      let totalDistanceMeters = 0;
+      let totalEvadedCount = 0;
+      let dangerAlertTimer = 0;
+      let comboCount = 0;         // 当前连击层数
+      let comboTimer = 0;         // 连击剩余保持时间（秒）
+      let lapCount = 1;           // 当前圈数（逐圈提升障碍密度）
+      let bestScore = 0;          // 历史最高分（跨局持久化）
+      let countdownTime = 0;      // 发车倒计时剩余秒数，>0 时冻结动力
+
+      // 触觉反馈震动引擎（Haptic Vibration）
+      const Haptics = {
+        enabled: typeof navigator !== 'undefined' && 'vibrate' in navigator,
+        tap() { if (this.enabled) try { navigator.vibrate(15); } catch (e) {} },
+        boost() { if (this.enabled) try { navigator.vibrate(35); } catch (e) {} },
+        drift() { if (this.enabled) try { navigator.vibrate([10, 30, 10]); } catch (e) {} },
+        crash() { if (this.enabled) try { navigator.vibrate([80, 50, 120]); } catch (e) {} },
+        blip() { if (this.enabled) try { navigator.vibrate(25); } catch (e) {} },
+      };
+
+      // 输入状态（键盘 / 触控 / 手柄三源分离，避免互相覆盖）
+      const inputs = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false };
+      const keys = {};
+      const touchState = { gas: false, brake: false, nitro: false, handbrake: false, left: false, right: false, steerValue: 0 };
+      const padState = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false, active: false };
+
+      // 向量暂存区（Scratchpad）：主循环内零分配，消除 GC 微顿卡
+      const S = {
+        v1: new THREE.Vector3(), v2: new THREE.Vector3(), v3: new THREE.Vector3(),
+        v4: new THREE.Vector3(), v5: new THREE.Vector3(), v6: new THREE.Vector3(),
+        axisY: new THREE.Vector3(0, 1, 0),
+        axisZneg: new THREE.Vector3(0, 0, -1),
+        axisZpos: new THREE.Vector3(0, 0, 1),
+        axisXpos: new THREE.Vector3(1, 0, 0),
+      };
+
+      // DOM 引用缓存
+      const dom = {};
+      // HUD 脏写缓存：仅在数值变化时写 DOM，避免每帧触发重排
+      const hudCache = { score: -1, distance: -1, evaded: -1, durability: -1, speed: -1, gear: '', nitro: -1, surface: '', gforce: '', combo: -1, best: -1 };
+
+      /** 将 60fps 标定的插值系数换算为任意帧率下的等效系数 */
+      function dampByDelta(basePerFrame, delta) {
+        return 1 - Math.pow(1 - basePerFrame, delta * 60);
+      }
+
+      /* ---------------------- 2. 高精度赛道与护栏构建 ---------------------- */
+      function buildTrackLut() {
+        const n = TRACK_CONFIG.lutSamples;
+        trackLut.count = n;
+        trackLut.pos = new Float32Array(n * 3);
+        trackLut.tan = new Float32Array(n * 3);
+        trackLut.bin = new Float32Array(n * 3);
+        trackLut.radius = new Float32Array(n);
+
+        const up = S.axisY;
+        for (let i = 0; i < n; i++) {
+          const t = i / n;
+          const pt = trackCurve.getPointAt(t);
+          const tan = trackCurve.getTangentAt(t).normalize();
+          const bin = new THREE.Vector3().crossVectors(tan, up).normalize();
+          const o = i * 3;
+          trackLut.pos[o] = pt.x; trackLut.pos[o + 1] = pt.y; trackLut.pos[o + 2] = pt.z;
+          trackLut.tan[o] = tan.x; trackLut.tan[o + 1] = tan.y; trackLut.tan[o + 2] = tan.z;
+          trackLut.bin[o] = bin.x; trackLut.bin[o + 1] = bin.y; trackLut.bin[o + 2] = bin.z;
+        }
+        trackLut.length = trackCurve.getLength();
+        trackLut.spacing = trackLut.length / n;
+
+        // 曲率半径：Menger 三点法，取相邻采样构成三角形的外接圆半径
+        //   kappa = 4·Area / (|AB|·|BC|·|CA|)，R = 1/kappa
+        // 结果用于"直道多放、弯道少放"的可玩性布点，避免高速下障碍密集到无法反应。
+        const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+        for (let i = 0; i < n; i++) {
+          a.copy(sampleLutPos(((i - 2) % n + n) % n));
+          b.copy(sampleLutPos(i));
+          c.copy(sampleLutPos((i + 2) % n));
+          const ab = a.distanceTo(b), bc = b.distanceTo(c), ca = c.distanceTo(a);
+          const area = b.clone().sub(a).cross(c.clone().sub(a)).length() * 0.5;
+          const kappa = (area > 1e-6 && ab * bc * ca > 1e-6) ? (4 * area) / (ab * bc * ca) : 0;
+          trackLut.radius[i] = kappa > 1e-6 ? Math.min(1 / kappa, 5000) : 5000;
+        }
+      }
+
+      /** 读取 LUT 中第 idx 个采样的位置（复用暂存向量，避免构造开销） */
+      const lutPosScratch = new THREE.Vector3();
+      function sampleLutPos(idx) {
+        const o = idx * 3;
+        return lutPosScratch.set(trackLut.pos[o], trackLut.pos[o + 1], trackLut.pos[o + 2]);
+      }
+
+      /** 按横向抓地圆反推该半径弯道的可通过车速（米/秒），供布点与预告复用 */
+      function corneringSpeed(carSpec, radius) {
+        const a0 = carSpec.latGripBase, k = carSpec.latGripDownforce;
+        // v² = (a0 + k·v²)·R  =>  v²(1 - k·R) = a0·R
+        if (k * radius >= 1) return carSpec.maxSpeed;
+        return Math.min(carSpec.maxSpeed, Math.sqrt(a0 * radius / (1 - k * radius)));
+      }
+
+      function generateTrack() {
+        const points = TRACK_CONFIG.points.map(p => new THREE.Vector3(p[0], p[1], p[2]));
+        trackCurve = new THREE.CatmullRomCurve3(points, true, 'centripetal', 0.5);
+        buildTrackLut();
+
+        const segments = TRACK_CONFIG.loftSegments;
+        const trackWidth = TRACK_CONFIG.trackWidth;
+        const geometry = new THREE.BufferGeometry();
+        const vertices = [];
+        const uvs = [];
+        const normals = [];
+
+        const barrierMat = new THREE.MeshStandardMaterial({
+          color: 0x94a3b8, metalness: 0.85, roughness: 0.25, side: THREE.DoubleSide,
+        });
+        const barrierGeoL = new THREE.BufferGeometry();
+        const barrierGeoR = new THREE.BufferGeometry();
+        const bVertsL = [];
+        const bVertsR = [];
+        // 草地缓冲区网格：路肩外沿至护栏之间，给失控车辆一条可视、可感的减速带
+        const runoffGeo = new THREE.BufferGeometry();
+        const rVerts = [];
+        const rNormals = [];
+        const up = S.axisY;
+
+        // 护栏外移量 = 路肩带宽 + 草地缓冲带（与 locateOnTrack 的判定完全一致）
+        const barrierOffset = trackWidth / 2 + KERB_BAND + GRASS_BAND;
+
+        for (let i = 0; i <= segments; i++) {
+          const t = i / segments;
+          const pt = trackCurve.getPointAt(t);
+          const tangent = trackCurve.getTangentAt(t).normalize();
+          const binormal = S.v1.crossVectors(tangent, up).normalize();
+
+          const pLeft = S.v2.copy(pt).addScaledVector(binormal, -trackWidth / 2);
+          const pRight = S.v3.copy(pt).addScaledVector(binormal, trackWidth / 2);
+          vertices.push(pLeft.x, pLeft.y + 0.12, pLeft.z);
+          vertices.push(pRight.x, pRight.y + 0.12, pRight.z);
+
+          uvs.push(0, t * 65, 1, t * 65);
+          normals.push(0, 1, 0, 0, 1, 0);
+
+          // 草地缓冲带（左右各一条，略低于路面形成视觉落差）
+          // 注意：此处必须用独立向量，若复用同一暂存槽会造成 in/out 别名覆写
+          const gInL = new THREE.Vector3().copy(pt).addScaledVector(binormal, -(trackWidth / 2 + KERB_BAND));
+          const gOutL = new THREE.Vector3().copy(pt).addScaledVector(binormal, -barrierOffset);
+          rVerts.push(gInL.x, gInL.y + 0.04, gInL.z, gOutL.x, gOutL.y + 0.02, gOutL.z);
+          const gInR = new THREE.Vector3().copy(pt).addScaledVector(binormal, trackWidth / 2 + KERB_BAND);
+          const gOutR = new THREE.Vector3().copy(pt).addScaledVector(binormal, barrierOffset);
+          rVerts.push(gInR.x, gInR.y + 0.04, gInR.z, gOutR.x, gOutR.y + 0.02, gOutR.z);
+          rNormals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+
+          const bPosL = S.v4.copy(pt).addScaledVector(binormal, -barrierOffset);
+          bVertsL.push(bPosL.x, bPosL.y + 0.2, bPosL.z, bPosL.x, bPosL.y + 1.4, bPosL.z);
+          const bPosR = S.v4.copy(pt).addScaledVector(binormal, barrierOffset);
+          bVertsR.push(bPosR.x, bPosR.y + 0.2, bPosR.z, bPosR.x, bPosR.y + 1.4, bPosR.z);
+        }
+
+        const indices = [];
+        for (let i = 0; i < segments; i++) {
+          const r1 = i * 2;
+          const r2 = (i + 1) * 2;
+          indices.push(r1, r1 + 1, r2, r1 + 1, r2 + 1, r2);
+        }
+
+        // 草地缓冲带使用独立的四顶点/段索引序（左右两条各占 2 个顶点）
+        const runoffIndices = [];
+        for (let i = 0; i < segments; i++) {
+          const rowA = i * 4, rowB = (i + 1) * 4;
+          // 左带
+          runoffIndices.push(rowA, rowA + 1, rowB, rowA + 1, rowB + 1, rowB);
+          // 右带
+          runoffIndices.push(rowA + 2, rowA + 3, rowB + 2, rowA + 3, rowB + 3, rowB + 2);
+        }
+        runoffGeo.setIndex(runoffIndices);
+        runoffGeo.setAttribute('position', new THREE.Float32BufferAttribute(rVerts, 3));
+        runoffGeo.setAttribute('normal', new THREE.Float32BufferAttribute(rNormals, 3));
+
+        geometry.setIndex(indices);
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+        geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+
+        const trackTex = generateAsphaltTexture();
+        trackTex.wrapS = THREE.RepeatWrapping;
+        trackTex.wrapT = THREE.RepeatWrapping;
+        trackTex.repeat.set(1, 45);
+
+        const trackMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
+          color: 0x22262c, roughness: 0.82, metalness: 0.18, map: trackTex,
+        }));
+        trackMesh.receiveShadow = true;
+        scene.add(trackMesh);
+
+        barrierGeoL.setIndex(indices);
+        barrierGeoL.setAttribute('position', new THREE.Float32BufferAttribute(bVertsL, 3));
+        barrierGeoL.computeVertexNormals();
+        barrierGeoR.setIndex(indices);
+        barrierGeoR.setAttribute('position', new THREE.Float32BufferAttribute(bVertsR, 3));
+        barrierGeoR.computeVertexNormals();
+        scene.add(new THREE.Mesh(barrierGeoL, barrierMat), new THREE.Mesh(barrierGeoR, barrierMat));
+
+        const runoffMesh = new THREE.Mesh(runoffGeo, new THREE.MeshStandardMaterial({
+          color: 0x14351f, roughness: 0.96, metalness: 0.02, side: THREE.DoubleSide,
+        }));
+        runoffMesh.receiveShadow = true;
+        scene.add(runoffMesh);
+
+        createTracksideProps();
+      }
+
+      function generateAsphaltTexture() {
+        const cvs = document.createElement('canvas');
+        cvs.width = 512; cvs.height = 512;
+        const ctx = cvs.getContext('2d');
+
+        ctx.fillStyle = '#1c1f24';
+        ctx.fillRect(0, 0, 512, 512);
+
+        for (let i = 0; i < 4500; i++) {
+          ctx.fillStyle = Math.random() > 0.5 ? '#2b2f38' : '#14161a';
+          ctx.fillRect(Math.random() * 512, Math.random() * 512, 2, 2);
+        }
+
+        // 橡胶走线痕
+        const gradL = ctx.createLinearGradient(130, 0, 200, 0);
+        gradL.addColorStop(0, 'rgba(10, 12, 14, 0)');
+        gradL.addColorStop(0.5, 'rgba(10, 12, 14, 0.45)');
+        gradL.addColorStop(1, 'rgba(10, 12, 14, 0)');
+        ctx.fillStyle = gradL;
+        ctx.fillRect(130, 0, 70, 512);
+
+        const gradR = ctx.createLinearGradient(310, 0, 380, 0);
+        gradR.addColorStop(0, 'rgba(10, 12, 14, 0)');
+        gradR.addColorStop(0.5, 'rgba(10, 12, 14, 0.45)');
+        gradR.addColorStop(1, 'rgba(10, 12, 14, 0)');
+        ctx.fillStyle = gradR;
+        ctx.fillRect(310, 0, 70, 512);
+
+        // 红白路肩
+        const kerbWidth = 46;
+        for (let y = 0; y < 512; y += 48) {
+          ctx.fillStyle = (Math.floor(y / 48) % 2 === 0) ? '#d92626' : '#f8fafc';
+          ctx.fillRect(0, y, kerbWidth, 48);
+          ctx.fillRect(512 - kerbWidth, y, kerbWidth, 48);
+        }
+
+        // 中央虚线
+        ctx.fillStyle = 'rgba(230, 235, 245, 0.85)';
+        for (let y = 0; y < 512; y += 72) {
+          ctx.fillRect(251, y, 10, 40);
+        }
+
+        return new THREE.CanvasTexture(cvs);
+      }
+
+      function createTracksideProps() {
+        const pStart = trackCurve.getPointAt(0);
+        const tangent = trackCurve.getTangentAt(0);
+        const binormal = S.v1.crossVectors(tangent, S.axisY).normalize();
+
+        const gantryGroup = new THREE.Group();
+        const poleMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, metalness: 0.9, roughness: 0.2 });
+        const poleGeo = new THREE.CylinderGeometry(0.45, 0.45, 12, 8);
+        // 灯柱与护栏对齐（护栏已外移，避免立柱穿进草地缓冲带）
+        const postOffset = TRACK_CONFIG.trackWidth / 2 + KERB_BAND + GRASS_BAND + 1.8;
+
+        const poleL = new THREE.Mesh(poleGeo, poleMat);
+        poleL.position.copy(pStart).addScaledVector(binormal, -postOffset);
+        poleL.position.y = 6;
+        const poleR = new THREE.Mesh(poleGeo, poleMat);
+        poleR.position.copy(pStart).addScaledVector(binormal, postOffset);
+        poleR.position.y = 6;
+
+        const beamGeo = new THREE.BoxGeometry(postOffset * 2 + 2, 1.8, 2.2);
+        const beamMat = new THREE.MeshStandardMaterial({
+          color: 0x00f0ff, emissive: 0x005577, emissiveIntensity: 0.6, metalness: 0.9,
+        });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        beam.position.copy(pStart).add(S.v2.set(0, 11, 0));
+        beam.quaternion.setFromUnitVectors(S.axisXpos, binormal);
+
+        /* 龙门架发车计时指示灯 (LED Start Lights)
+         * 每盏灯持有独立材质实例，倒计时期间逐盏点亮红灯，放行瞬间全绿。
+         * 共享材质会让 4 盏灯的状态互相覆写，故此处必须 clone。
+         */
+        const lightBoxMat = new THREE.MeshStandardMaterial({ color: 0x0a0f18 });
+        const bulbGeo = new THREE.SphereGeometry(0.35, 8, 8);
+        startLightBulbs.length = 0;
+
+        [-4, -1.33, 1.33, 4].forEach(x => {
+          const lBox = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 0.4), lightBoxMat);
+          lBox.position.set(x, 11, 0);
+          lBox.quaternion.copy(beam.quaternion);
+
+          const bulb = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: START_LIGHT.off }));
+          bulb.position.set(x, 11, -1.2);
+          gantryGroup.add(lBox, bulb);
+          startLightBulbs.push(bulb);
+        });
+
+        gantryGroup.add(poleL, poleR, beam);
+        scene.add(gantryGroup);
+
+        // 赛道两侧高亮泛光照明路灯柱 (Track Floodlight Towers)
+        const lampPostGeo = new THREE.CylinderGeometry(0.2, 0.3, 16, 6);
+        const lampArmGeo = new THREE.BoxGeometry(3.5, 0.25, 0.4);
+        const lampBulbGeo = new THREE.BoxGeometry(1.8, 0.3, 0.8);
+        const floodMat = new THREE.MeshBasicMaterial({ color: 0xe0f2fe });
+
+        // 照明塔立于护栏外侧（护栏已随草地缓冲带外移）
+        const towerBase = TRACK_CONFIG.trackWidth / 2 + KERB_BAND + GRASS_BAND;
+
+        for (let t = 0.12; t < 0.95; t += 0.16) {
+          const pt = trackCurve.getPointAt(t);
+          const tan = trackCurve.getTangentAt(t).normalize();
+          const bin = S.v3.crossVectors(tan, S.axisY).normalize();
+
+          // 左右各设一处高耸照明塔
+          [-towerBase - 3.8, towerBase + 3.8].forEach((offset, sideIdx) => {
+            const tower = new THREE.Group();
+            const pole = new THREE.Mesh(lampPostGeo, poleMat);
+            pole.position.y = 8;
+
+            const arm = new THREE.Mesh(lampArmGeo, poleMat);
+            arm.position.set(sideIdx === 0 ? 1.5 : -1.5, 15.6, 0);
+
+            const bulb = new THREE.Mesh(lampBulbGeo, floodMat);
+            bulb.position.set(sideIdx === 0 ? 2.8 : -2.8, 15.4, 0);
+
+            tower.add(pole, arm, bulb);
+            tower.position.copy(pt).addScaledVector(bin, offset);
+            tower.quaternion.setFromUnitVectors(S.axisXpos, bin);
+            scene.add(tower);
+          });
+        }
+      }
+
+      /* ---------------------- 3. 障碍物系统（三变体：水马 / 油桶 / 破损路段） ---------------------- */
+
+      /* 变体表。
+       *   damage    = 撞击耐久损失（%）
+       *   hitRadius = 车辆路径与该障碍的等效碰撞半径（米）
+       *   lift      = 等效球心相对组原点的高度（米）
+       *   knockable = 是否可被撞倒（破损路段为路面凹陷，撞不翻）
+       *   speedKeep = 撞击后速度保留率
+       */
+      const OBSTACLE_KINDS = {
+        barrier: { damage: 25, hitRadius: 2.2, lift: 0.55, knockable: true,  speedKeep: 0.45 },
+        drum:    { damage: 20, hitRadius: 2.0, lift: 0.50, knockable: true,  speedKeep: 0.55 },
+        pothole: { damage: 15, hitRadius: 2.5, lift: 0.10, knockable: false, speedKeep: 0.72 },
+      };
+      // 池中变体配比：每 8 个为一组，4 水马 / 3 油桶 / 1 破损路段
+      const KIND_CYCLE = ['barrier', 'barrier', 'drum', 'barrier', 'pothole', 'drum', 'barrier', 'drum'];
+
+      function initObstaclePool() {
+        // 1. 共享材质（反光工程塑料与高亮反射条）
+        const barrierBodyMat = new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.38, metalness: 0.12 });
+        const whiteStripeMat = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.20 });
+        const blackBaseMat = new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.7, metalness: 0.3 });
+        const drumBodyMat = new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.42, metalness: 0.35 });
+        const drumBandMat = new THREE.MeshStandardMaterial({ color: 0x11141a, roughness: 0.55, metalness: 0.4 });
+        const patchMat = new THREE.MeshStandardMaterial({ color: 0x05070b, roughness: 0.98, metalness: 0.02 });
+        const crackMat = new THREE.MeshStandardMaterial({ color: 0x3a4150, roughness: 0.9, metalness: 0.05 });
+        const lampCrownMat = new THREE.MeshBasicMaterial({ color: 0xffaa00 });
+
+        /* 警示顶灯光晕：按相位分桶的共享材质。
+         * 旧版 25 个障碍共用 1 个材质实例并各自覆写 opacity，
+         * 结果每帧只有循环末位的相位生效，全体同步乱闪。
+         * 分桶后每帧只切换材质引用，既保留相位差又避免逐对象克隆。
+         */
+        haloPhaseMaterials.length = 0;
+        for (let p = 0; p < HALO_PHASE_STEPS; p++) {
+          haloPhaseMaterials.push(new THREE.MeshBasicMaterial({
+            color: 0xffe066, transparent: true,
+            opacity: LAMP_OPACITY_BASE + LAMP_OPACITY_AMP * Math.sin((p / HALO_PHASE_STEPS) * Math.PI * 2),
+          }));
+        }
+
+        // 2. 共享几何体
+        const baseGeo = new THREE.BoxGeometry(2.5, 0.22, 1.05);
+        const mainBodyGeo = new THREE.BoxGeometry(2.32, 0.85, 0.72);
+        const topLipGeo = new THREE.BoxGeometry(2.36, 0.12, 0.76);
+        const stripeGeo = new THREE.BoxGeometry(0.32, 0.78, 0.74);
+        const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
+        const lampBulbGeo = new THREE.SphereGeometry(0.18, 10, 8);
+        const lampHaloGeo = new THREE.SphereGeometry(0.28, 8, 6);
+        const drumGeo = new THREE.CylinderGeometry(0.62, 0.62, 1.05, 14);
+        const drumLidGeo = new THREE.CylinderGeometry(0.66, 0.66, 0.09, 14);
+        const drumBandGeo = new THREE.CylinderGeometry(0.655, 0.655, 0.13, 14);
+        const patchGeo = new THREE.CircleGeometry(1.35, 9);
+        const crackGeo = new THREE.BoxGeometry(0.1, 0.05, 1.5);
+
+        for (let i = 0; i < MAX_OBSTACLES; i++) {
+          const kind = KIND_CYCLE[i % KIND_CYCLE.length];
+          const cfg = OBSTACLE_KINDS[kind];
+          const obsGroup = new THREE.Group();
+          let lampHalo = null;
+
+          if (kind === 'barrier') {
+            // 黑色加重橡胶底座
+            const baseMesh = new THREE.Mesh(baseGeo, blackBaseMat);
+            baseMesh.position.y = 0.11;
+            baseMesh.receiveShadow = true;
+            // 橙红色反光水马主体
+            const bodyMesh = new THREE.Mesh(mainBodyGeo, barrierBodyMat);
+            bodyMesh.position.y = 0.58;
+            bodyMesh.castShadow = true;
+            // 上边缘包边加固槽
+            const topLip = new THREE.Mesh(topLipGeo, barrierBodyMat);
+            topLip.position.y = 1.05;
+            obsGroup.add(baseMesh, bodyMesh, topLip);
+            // 斑马条纹：间隔反光白条
+            [-0.72, -0.24, 0.24, 0.72].forEach(x => {
+              const stripe = new THREE.Mesh(stripeGeo, whiteStripeMat);
+              stripe.position.set(x, 0.58, 0);
+              obsGroup.add(stripe);
+            });
+            // 警示旋转闪烁黄灯柱
+            const post = new THREE.Mesh(postGeo, blackBaseMat);
+            post.position.set(0, 1.25, 0);
+            const lampBulb = new THREE.Mesh(lampBulbGeo, lampCrownMat);
+            lampBulb.position.set(0, 1.48, 0);
+            lampHalo = new THREE.Mesh(lampHaloGeo, haloPhaseMaterials[0]);
+            lampHalo.position.set(0, 1.48, 0);
+            obsGroup.add(post, lampBulb, lampHalo);
+
+          } else if (kind === 'drum') {
+            // 反光油桶：桶身 + 上下桶箍 + 顶盖
+            const body = new THREE.Mesh(drumGeo, drumBodyMat);
+            body.position.y = 0.55;
+            body.castShadow = true;
+            const lid = new THREE.Mesh(drumLidGeo, drumBandMat);
+            lid.position.y = 1.10;
+            const bandLow = new THREE.Mesh(drumBandGeo, drumBandMat);
+            bandLow.position.y = 0.34;
+            const bandHigh = new THREE.Mesh(drumBandGeo, drumBandMat);
+            bandHigh.position.y = 0.78;
+            obsGroup.add(body, lid, bandLow, bandHigh);
+            // 斜贴反光条（提升夜间轮廓辨识）
+            const stripe = new THREE.Mesh(stripeGeo, whiteStripeMat);
+            stripe.scale.set(0.9, 0.62, 1.6);
+            stripe.position.set(0, 0.58, 0.3);
+            stripe.rotation.z = 0.5;
+            obsGroup.add(stripe);
+
+          } else {
+            // 破损路段：扁平塌陷坑面 + 放射状裂纹，贴地不可撞翻
+            const patch = new THREE.Mesh(patchGeo, patchMat);
+            patch.rotation.x = -Math.PI / 2;
+            patch.position.y = 0.14;
+            obsGroup.add(patch);
+            for (let k = 0; k < 4; k++) {
+              const crack = new THREE.Mesh(crackGeo, crackMat);
+              crack.position.set(0, 0.16, 0);
+              crack.rotation.y = (k / 4) * Math.PI + 0.3;
+              crack.scale.z = 0.7 + (k % 2) * 0.4;
+              obsGroup.add(crack);
+            }
+          }
+
+          obsGroup.visible = false;
+          obsGroup.userData = {
+            kind: kind,
+            t: 0,
+            hit: false,
+            evaded: false,
+            nearMissed: false,
+            knocked: false,
+            knockT: 0,
+            lat: 0,
+            lampHalo: lampHalo,
+            haloPhase: (i * 2.4) % (Math.PI * 2), // 相位偏移，使相邻障碍错开闪烁
+            hitRadius: cfg.hitRadius,
+            lift: cfg.lift,
+            damage: cfg.damage,
+            knockable: cfg.knockable,
+            speedKeep: cfg.speedKeep,
+          };
+          scene.add(obsGroup);
+          obstaclePool.push(obsGroup);
+        }
+      }
+
+      /**
+       * 按弯道可通过车速贪心布点：保证任意相邻障碍的弧长间隔
+       * 不短于"该处车速 × 反应时间"，使高速段不会退化成不可反应的反应力测试。
+       * 圈数递增时提高密度，形成难度曲线。
+       */
+      function populateTrackObstacles() {
+        for (let i = 0; i < activeObstacles.length; i++) {
+          activeObstacles[i].visible = false;
+        }
+        activeObstacles = [];
+
+        const n = trackLut.count;
+        const spec = VEHICLES[selectedVehicleType];
+        const targetCount = Math.min(
+          obstaclePool.length,
+          (isMobileDevice ? 16 : 24) + (lapCount - 1) * 3,
+        );
+        const reactionSec = isMobileDevice ? 1.05 : 0.95;
+        const laneRange = TRACK_CONFIG.trackWidth - 8;
+        // 起点后 4% 留空，给发车倒计时一个干净的加速段
+        let idx = Math.floor(n * 0.04);
+        const guardEnd = Math.floor(n * 0.97);
+        let placed = 0;
+
+        while (placed < targetCount && idx < guardEnd) {
+          const r = trackLut.radius[idx];
+          // 该采样点的可通过车速（下限 12 m/s，避免发夹弯处算出过小间距）
+          const vPass = Math.max(12, corneringSpeed(spec, r));
+          const needMeters = vPass * reactionSec + 8;
+          const needSamples = Math.max(8, Math.ceil(needMeters / trackLut.spacing));
+
+          const t = idx / n;
+          const pt = trackCurve.getPointAt(t);
+          const tangent = trackCurve.getTangentAt(t).normalize();
+          const binormal = S.v1.crossVectors(tangent, S.axisY).normalize();
+          const laneOffset = (Math.random() - 0.5) * laneRange;
+
+          const obs = obstaclePool[placed];
+          obs.position.copy(pt).addScaledVector(binormal, laneOffset);
+          obs.quaternion.setFromUnitVectors(S.axisZneg, tangent);
+          obs.rotation.x = 0;
+          obs.userData.t = t;
+          obs.userData.lat = laneOffset;
+          obs.userData.hit = false;
+          obs.userData.evaded = false;
+          obs.userData.nearMissed = false;
+          obs.userData.knocked = false;
+          obs.userData.knockT = 0;
+          obs.visible = true;
+          activeObstacles.push(obs);
+
+          placed++;
+          idx += needSamples;
+        }
+      }
+
+      /** 警示顶灯相位闪烁 + 被撞障碍的倒地动画 */
+      function updateObstacleKnockdown(delta) {
+        const timeNow = performance.now() * 0.008;
+        for (let i = 0; i < activeObstacles.length; i++) {
+          const obs = activeObstacles[i];
+          if (!obs.visible) continue;
+          const ud = obs.userData;
+
+          // 顶灯频闪：从相位分桶中取用对应材质，各障碍相位彼此错开
+          if (ud.lampHalo) {
+            const phase = (timeNow + ud.haloPhase) % (Math.PI * 2);
+            const bucket = Math.floor((phase / (Math.PI * 2)) * HALO_PHASE_STEPS) % HALO_PHASE_STEPS;
+            if (ud.lampHalo.material !== haloPhaseMaterials[bucket]) {
+              ud.lampHalo.material = haloPhaseMaterials[bucket];
+            }
+          }
+
+          if (!ud.knocked) continue;
+          ud.knockT += delta;
+          const k = Math.min(1, ud.knockT / COLLISION.KNOCK_SETTLE);
+          obs.position.y += (1 - k) * delta * 3.2;
+          obs.rotation.x += delta * 2.4 * (1 - k);
+          if (k >= 1) {
+            ud.knocked = false;
+            obs.visible = false;
+          }
+        }
+      }
+
+      /* ---------------------- 4. 胎印与烧胎白烟粒子 ---------------------- */
+      function initSkidmarksAndSmoke() {
+        const maxPts = MAX_SKID_SEGMENTS * 2;
+        const positions = new Float32Array(maxPts * 3);
+        const skidGeo = new THREE.BufferGeometry();
+        const skidAttr = new THREE.BufferAttribute(positions, 3);
+        skidGeo.setAttribute('position', skidAttr);
+        skidmarkLine = new THREE.LineSegments(skidGeo, new THREE.LineBasicMaterial({
+          color: 0x111111, transparent: true, opacity: 0.75,
+        }));
+        skidmarkLine.frustumCulled = false;
+        scene.add(skidmarkLine);
+
+        const smokeGeo = new THREE.BoxGeometry(0.35, 0.35, 0.35);
+        // 透明度分桶共享材质：8 个材质状态替代 100 次克隆，避免逐粒子材质切换开销
+        for (let s = 0; s < SMOKE_OPACITY_STEPS; s++) {
+          smokeMaterials.push(new THREE.MeshBasicMaterial({
+            color: 0xdde6ed, transparent: true,
+            opacity: 0.5 * (1 - s / SMOKE_OPACITY_STEPS),
+          }));
+        }
+        for (let i = 0; i < MAX_SMOKE_PARTICLES; i++) {
+          const p = new THREE.Mesh(smokeGeo, smokeMaterials[0]);
+          p.visible = false;
+          p.materialIndex = 0;
+          p.userData = { vel: new THREE.Vector3(), life: 0, maxLife: 1 };
+          scene.add(p);
+          smokeFree.push(p);
+        }
+      }
+
+      /** 左右轮各记录一条轨迹段（修复旧版单段横跨车轴形成的"梯子"伪影） */
+      function recordSkidPair(leftPos, rightPos, prevLeft, prevRight) {
+        if (!skidmarkLine) return;
+        const attr = skidmarkLine.geometry.attributes.position;
+        const arr = attr.array;
+        const cap = MAX_SKID_SEGMENTS;
+
+        // 左轮轨迹段
+        let base = (skidIndex % cap) * 6;
+        arr[base] = prevLeft.x; arr[base + 1] = prevLeft.y - 0.34; arr[base + 2] = prevLeft.z;
+        arr[base + 3] = leftPos.x; arr[base + 4] = leftPos.y - 0.34; arr[base + 5] = leftPos.z;
+        skidIndex++;
+
+        // 右轮轨迹段
+        base = (skidIndex % cap) * 6;
+        arr[base] = prevRight.x; arr[base + 1] = prevRight.y - 0.34; arr[base + 2] = prevRight.z;
+        arr[base + 3] = rightPos.x; arr[base + 4] = rightPos.y - 0.34; arr[base + 5] = rightPos.z;
+        skidIndex++;
+
+        attr.needsUpdate = true;
+      }
+
+      function emitSmoke(pos) {
+        const p = smokeFree.pop();
+        if (!p) return;
+        const ud = p.userData;
+        p.position.copy(pos).add(S.v5.set(
+          (Math.random() - 0.5) * 0.4,
+          0.2 + Math.random() * 0.2,
+          (Math.random() - 0.5) * 0.4,
+        ));
+        p.scale.setScalar(0.6 + Math.random() * 0.4);
+        ud.vel.set(
+          (Math.random() - 0.5) * 2,
+          1.8 + Math.random() * 1.5,
+          (Math.random() - 0.5) * 2,
+        );
+        ud.maxLife = 0.6 + Math.random() * 0.3;
+        ud.life = ud.maxLife;
+        p.visible = true;
+        activeSmoke.push(p);
+      }
+
+      function updateParticles(delta) {
+        for (let i = activeSmoke.length - 1; i >= 0; i--) {
+          const p = activeSmoke[i];
+          const ud = p.userData;
+          p.position.addScaledVector(ud.vel, delta);
+          p.scale.multiplyScalar(1 + delta * 2);
+          ud.life -= delta;
+          if (ud.life <= 0) {
+            p.visible = false;
+            // swap-pop 移除，避免 splice 的 O(n) 元素搬移
+            const last = activeSmoke.length - 1;
+            activeSmoke[i] = activeSmoke[last];
+            activeSmoke.pop();
+            smokeFree.push(p);
+          } else {
+            const step = Math.min(
+              SMOKE_OPACITY_STEPS - 1,
+              Math.floor((1 - ud.life / ud.maxLife) * SMOKE_OPACITY_STEPS),
+            );
+            if (p.materialIndex !== step) {
+              p.material = smokeMaterials[step];
+              p.materialIndex = step;
+            }
+          }
+        }
+      }
+
+      /* ---------------------- 5. 超跑精细几何与材质建模 ---------------------- */
+      function createSuperCar(spec) {
+        const carGroup = new THREE.Group();
+
+        // 1. 材质定义（顶级超跑 PBR 材质）
+        const paintMat = new THREE.MeshPhysicalMaterial({
+          color: spec.color,
+          metalness: 0.88,
+          roughness: 0.18,
+          clearcoat: 1.0,
+          clearcoatRoughness: 0.06,
+          reflectivity: 0.9,
+        });
+        const carbonMat = new THREE.MeshStandardMaterial({
+          color: 0x12151c,
+          metalness: 0.85,
+          roughness: 0.32,
+        });
+        const darkTrimMat = new THREE.MeshStandardMaterial({
+          color: 0x080b10,
+          metalness: 0.9,
+          roughness: 0.5,
+        });
+        const glassMat = new THREE.MeshPhysicalMaterial({
+          color: 0x0a1422,
+          metalness: 0.2,
+          roughness: 0.05,
+          transparent: true,
+          opacity: 0.82,
+          transmission: 0.4,
+          ior: 1.5,
+        });
+        const chromeMat = new THREE.MeshStandardMaterial({
+          color: 0xe2e8f0,
+          metalness: 0.98,
+          roughness: 0.1,
+        });
+        const interiorMat = new THREE.MeshStandardMaterial({
+          color: 0x1a202c,
+          roughness: 0.8,
+        });
+
+        // 2. 车身底盘与核心骨架 (Chassis & Core Shell)
+        // 主车身基座
+        const mainBody = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.42, 4.4), paintMat);
+        mainBody.position.y = 0.48;
+        mainBody.castShadow = true;
+        mainBody.receiveShadow = true;
+        carGroup.add(mainBody);
+
+        // 前机盖流线楔形斜面 (Hood Slope)
+        const hoodGeo = new THREE.CylinderGeometry(0.86, 1.02, 1.6, 4);
+        hoodGeo.rotateY(Math.PI / 4);
+        hoodGeo.scale(1.0, 0.24, 1.0);
+        const hood = new THREE.Mesh(hoodGeo, paintMat);
+        hood.position.set(0, 0.62, -1.35);
+        hood.rotation.x = 0.08;
+        hood.castShadow = true;
+        carGroup.add(hood);
+
+        // 前空气动力学前铲 (Front Splitter)
+        const frontSplitter = new THREE.Mesh(new THREE.BoxGeometry(2.18, 0.08, 0.65), carbonMat);
+        frontSplitter.position.set(0, 0.22, -2.25);
+        frontSplitter.castShadow = true;
+        carGroup.add(frontSplitter);
+
+        // 左右前风刃导流板 (Front Canards)
+        const canardGeo = new THREE.BoxGeometry(0.18, 0.22, 0.04);
+        const canardL = new THREE.Mesh(canardGeo, carbonMat);
+        canardL.position.set(-1.06, 0.38, -2.15);
+        canardL.rotation.y = 0.25;
+        const canardR = canardL.clone();
+        canardR.position.set(1.06, 0.38, -2.15);
+        canardR.rotation.y = -0.25;
+        carGroup.add(canardL, canardR);
+
+        // 左右侧裙与中置进气口 (Side Skirts & Air Intakes)
+        const sideSkirtGeo = new THREE.BoxGeometry(0.14, 0.16, 2.7);
+        const skirtL = new THREE.Mesh(sideSkirtGeo, carbonMat);
+        skirtL.position.set(-1.08, 0.26, 0.0);
+        const skirtR = skirtL.clone();
+        skirtR.position.set(1.08, 0.26, 0.0);
+        carGroup.add(skirtL, skirtR);
+
+        // 侧面碳纤维进气叶片 (Side Air Scoops)
+        const scoopGeo = new THREE.BoxGeometry(0.08, 0.32, 0.7);
+        const scoopL = new THREE.Mesh(scoopGeo, darkTrimMat);
+        scoopL.position.set(-1.06, 0.54, 0.6);
+        const scoopR = scoopL.clone();
+        scoopR.position.set(1.06, 0.54, 0.6);
+        carGroup.add(scoopL, scoopR);
+
+        // 3. 战斗座舱与挡风玻璃 (Cockpit & Aerodynamic Canopy)
+        // 玻璃座舱罩（圆润低风阻拱形）
+        const cabinGeo = new THREE.CylinderGeometry(0.58, 0.74, 2.05, 8);
+        cabinGeo.scale(1.2, 0.44, 1.0);
+        const cabin = new THREE.Mesh(cabinGeo, glassMat);
+        cabin.rotation.x = Math.PI / 2;
+        cabin.position.set(0, 0.96, -0.15);
+        cabin.castShadow = true;
+        carGroup.add(cabin);
+
+        // 车顶中央碳纤维脊鳍 (Roof Air Scoop / Spine)
+        const roofSpine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 1.8), carbonMat);
+        roofSpine.position.set(0, 1.20, 0.15);
+        carGroup.add(roofSpine);
+
+        // 左右碳纤维后视镜 (Wing Mirrors)
+        const mirrorGeo = new THREE.BoxGeometry(0.24, 0.09, 0.14);
+        const mirrorL = new THREE.Mesh(mirrorGeo, carbonMat);
+        mirrorL.position.set(-0.88, 0.90, -0.65);
+        const mirrorR = mirrorL.clone();
+        mirrorR.position.set(0.88, 0.90, -0.65);
+        carGroup.add(mirrorL, mirrorR);
+
+        // 4. 后部空气动力扩散器与排气口 (Rear Diffuser & Exhausts)
+        // 尾部大型气流扩散器
+        const diffuserGeo = new THREE.BoxGeometry(1.95, 0.24, 0.55);
+        const diffuser = new THREE.Mesh(diffuserGeo, carbonMat);
+        diffuser.position.set(0, 0.30, 2.18);
+        diffuser.rotation.x = -0.15;
+        carGroup.add(diffuser);
+
+        // 扩散器三道导流垂直叶片 (Diffuser Fins)
+        const finGeo = new THREE.BoxGeometry(0.04, 0.22, 0.5);
+        [-0.5, 0, 0.5].forEach(xOff => {
+          const fin = new THREE.Mesh(finGeo, darkTrimMat);
+          fin.position.set(xOff, 0.26, 2.22);
+          carGroup.add(fin);
+        });
+
+        // 双边四出钛合金排气管 (Quad Titanium Exhaust Pipes)
+        const exhaustGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.28, 12);
+        exhaustGeo.rotateX(Math.PI / 2);
+        const exhaustPositions = [-0.44, -0.28, 0.28, 0.44];
+        exhaustPositions.forEach(x => {
+          const pipe = new THREE.Mesh(exhaustGeo, chromeMat);
+          pipe.position.set(x, 0.44, 2.24);
+          carGroup.add(pipe);
+        });
+
+        // 5. 竞技级 GT 碳纤维尾翼 (Swan-neck GT Wing)
+        // 主翼板（下压力双曲面弧度）
+        const mainWing = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.06, 0.44), carbonMat);
+        mainWing.position.set(0, 1.34, 1.95);
+        mainWing.rotation.x = -0.06;
+        mainWing.castShadow = true;
+
+        // 左右端板 (Wing Endplates)
+        const endplateGeo = new THREE.BoxGeometry(0.05, 0.28, 0.48);
+        const endplateL = new THREE.Mesh(endplateGeo, carbonMat);
+        endplateL.position.set(-1.16, 1.34, 1.95);
+        const endplateR = endplateL.clone();
+        endplateR.position.set(1.16, 1.34, 1.95);
+
+        // 鹅颈式双碳纤维支架 (Swan-neck Stays)
+        const stayGeo = new THREE.BoxGeometry(0.06, 0.52, 0.18);
+        const stayL = new THREE.Mesh(stayGeo, carbonMat);
+        stayL.position.set(-0.55, 1.08, 1.96);
+        stayL.rotation.x = -0.2;
+        const stayR = stayL.clone();
+        stayR.position.set(0.55, 1.08, 1.96);
+        stayR.rotation.x = -0.2;
+
+        carGroup.add(mainWing, endplateL, endplateR, stayL, stayR);
+
+        // 6. 前矩阵式锐角 LED 大灯组 (Matrix LED Headlights)
+        const headMat = new THREE.MeshBasicMaterial({ color: 0xe0f7ff });
+        const headLensGeo = new THREE.BoxGeometry(0.52, 0.08, 0.14);
+        const headL = new THREE.Mesh(headLensGeo, headMat);
+        headL.position.set(-0.76, 0.52, -2.22);
+        headL.rotation.y = -0.22;
+        const headR = headL.clone();
+        headR.position.set(0.76, 0.52, -2.22);
+        headR.rotation.y = 0.22;
+
+        // 日间行车灯导光带 (Daytime Running Light Bars)
+        const drlMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff });
+        const drlGeo = new THREE.BoxGeometry(0.38, 0.03, 0.08);
+        const drlL = new THREE.Mesh(drlGeo, drlMat);
+        drlL.position.set(-0.78, 0.46, -2.25);
+        drlL.rotation.y = -0.22;
+        const drlR = drlL.clone();
+        drlR.position.set(0.78, 0.46, -2.25);
+        drlR.rotation.y = 0.22;
+        carGroup.add(headL, headR, drlL, drlR);
+
+        // 7. 全宽贯穿式霓虹流光 LED 尾灯 (Full-width LED Lightbar)
+        const tailMat = new THREE.MeshBasicMaterial({ color: 0xff0038 });
+        const tailBar = new THREE.Mesh(new THREE.BoxGeometry(1.96, 0.06, 0.08), tailMat);
+        tailBar.position.set(0, 0.62, 2.24);
+
+        // 左右立体回旋式刹车灯片
+        const tailSideGeo = new THREE.BoxGeometry(0.32, 0.12, 0.08);
+        const tailSideL = new THREE.Mesh(tailSideGeo, tailMat);
+        tailSideL.position.set(-0.78, 0.62, 2.22);
+        const tailSideR = tailSideL.clone();
+        tailSideR.position.set(0.78, 0.62, 2.22);
+        carGroup.add(tailBar, tailSideL, tailSideR);
+
+        // 8. 锻造多辐轮毂、通风打孔刹车盘与六活塞卡钳 (Forged Wheels & High-res Brakes)
+        const tireMat = new THREE.MeshStandardMaterial({
+          color: 0x14161a,
+          roughness: 0.92,
+          metalness: 0.08,
+        });
+        const rimOuterMat = new THREE.MeshStandardMaterial({
+          color: spec.color === 0x00f0ff ? 0x242b35 : 0xd4af37,
+          metalness: 0.94,
+          roughness: 0.14,
+        });
+        const brakeRotorMat = new THREE.MeshStandardMaterial({
+          color: 0x94a3b8,
+          metalness: 0.96,
+          roughness: 0.22,
+        });
+        const caliperMat = new THREE.MeshStandardMaterial({
+          color: 0xff0044,
+          metalness: 0.8,
+          roughness: 0.25,
+        });
+
+        const tireGeo = new THREE.CylinderGeometry(WHEEL_RADIUS, WHEEL_RADIUS, 0.38, 20);
+        const rimOuterGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.39, 14);
+        const spokeGeo = new THREE.BoxGeometry(0.06, 0.50, 0.395);
+        const rotorGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.04, 16);
+        const caliperGeo = new THREE.BoxGeometry(0.12, 0.22, 0.14);
+
+        const wheels = [];
+        const wheelOffsets = [
+          { x: -1.08, y: 0.38, z: -1.45 },
+          { x: 1.08, y: 0.38, z: -1.45 },
+          { x: -1.10, y: 0.40, z: 1.45 },
+          { x: 1.10, y: 0.40, z: 1.45 },
+        ];
+
+        wheelOffsets.forEach(pos => {
+          const wGroup = new THREE.Group();
+
+          // 轮胎与胎侧倒角
+          const tireMesh = new THREE.Mesh(tireGeo, tireMat);
+          tireMesh.rotation.z = Math.PI / 2;
+          tireMesh.castShadow = true;
+
+          // 轮毂外圈
+          const rimMesh = new THREE.Mesh(rimOuterGeo, rimOuterMat);
+          rimMesh.rotation.z = Math.PI / 2;
+
+          // 锻造十辐花瓣轮辐结构
+          const spoke1 = new THREE.Mesh(spokeGeo, rimOuterMat);
+          const spoke2 = spoke1.clone(); spoke2.rotation.z = Math.PI / 3;
+          const spoke3 = spoke1.clone(); spoke3.rotation.z = -Math.PI / 3;
+          spoke1.rotation.y = Math.PI / 2;
+          spoke2.rotation.y = Math.PI / 2;
+          spoke3.rotation.y = Math.PI / 2;
+
+          // 打孔通风刹车盘 (Brake Rotor)
+          const rotor = new THREE.Mesh(rotorGeo, brakeRotorMat);
+          rotor.rotation.z = Math.PI / 2;
+          rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
+
+          // 竞技六活塞卡钳 (Brembo Red Caliper)
+          const caliper = new THREE.Mesh(caliperGeo, caliperMat);
+          caliper.position.set(pos.x > 0 ? -0.15 : 0.15, 0.14, 0);
+
+          wGroup.add(tireMesh, rimMesh, spoke1, spoke2, spoke3, rotor, caliper);
+          wGroup.position.set(pos.x, pos.y, pos.z);
+          wGroup.userData = { baseY: pos.y };
+          carGroup.add(wGroup);
+          wheels.push(wGroup);
+        });
+
+        // 9. 氮气双筒喷射火焰（圆锥渐变自发光尾焰）
+        const nitroFlameMat = new THREE.MeshBasicMaterial({
+          color: 0x00f0ff,
+          transparent: true,
+          opacity: 0,
+        });
+        const nitroFlameGeo = new THREE.ConeGeometry(0.18, 1.2, 10);
+        nitroFlameGeo.rotateX(-Math.PI / 2);
+
+        const flameL = new THREE.Mesh(nitroFlameGeo, nitroFlameMat);
+        flameL.position.set(-0.36, 0.44, 2.75);
+        const flameR = flameL.clone();
+        flameR.position.set(0.36, 0.44, 2.75);
+
+        const nitroGroup = new THREE.Group();
+        nitroGroup.add(flameL, flameR);
+        carGroup.add(nitroGroup);
+
+        scene.add(carGroup);
+
+        return {
+          mesh: carGroup,
+          paintMat: paintMat,
+          wheels: wheels,
+          nitroFlame: flameL, // 引用主火焰材质用于统一控制透明度
+          nitroGroup: nitroGroup,
+          pos: new THREE.Vector3(),
+          prevPos: new THREE.Vector3(),
+          velocity: new THREE.Vector3(),
+          lastWheelL: new THREE.Vector3(),
+          lastWheelR: new THREE.Vector3(),
+          wheelWorldL: new THREE.Vector3(),
+          wheelWorldR: new THREE.Vector3(),
+          speed: 0,
+          // 车体坐标系下的速度分量（米/秒）：纵向与横向滑移
+          vLong: 0,
+          vLat: 0,
+          heading: 0,
+          steerAngle: 0,
+          suspensionPitch: 0,
+          suspensionRoll: 0,
+          isDrifting: false,
+          nitroAmount: 100,
+          isNitroActive: false,
+          surfaceType: 'tarmac',
+          gForce: 0,
+          lutIndex: 0,
+          lateral: 0,
+          // 横向滑移速度 (m/s)：车辆实际速度与车头指向的偏差，是漂移判定与 G 值来源
+          lateralSlip: 0,
+          // 视觉舵角（带助力衰减）与物理等效舵角分离，避免高速"打不动"的错觉
+          visualSteer: 0,
+          spec: spec,
+        };
+      }
+
+      /* ---------------------- 6. 场景初始化 ---------------------- */
+      function initSceneEnvironment() {
+        const container = document.getElementById('game-container');
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x050811, 0.0016);
+
+        camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.2, 2000);
+
+        renderer = new THREE.WebGLRenderer({
+          antialias: !isMobileDevice,
+          powerPreference: 'high-performance',
+          precision: isMobileDevice ? 'mediump' : 'highp',
+        });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2.0));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.15;
+        renderer.shadowMap.enabled = !isMobileDevice;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        container.appendChild(renderer.domElement);
+
+        scene.add(new THREE.HemisphereLight(0x557799, 0x111822, 1.8));
+
+        const sunLight = new THREE.DirectionalLight(0xfff5e6, 2.8);
+        sunLight.position.set(220, 320, 160);
+        sunLight.castShadow = !isMobileDevice;
+        if (sunLight.castShadow) {
+          sunLight.shadow.mapSize.width = 2048;
+          sunLight.shadow.mapSize.height = 2048;
+          sunLight.shadow.camera.near = 10;
+          sunLight.shadow.camera.far = 900;
+          const d = 160;
+          sunLight.shadow.camera.left = -d;
+          sunLight.shadow.camera.right = d;
+          sunLight.shadow.camera.top = d;
+          sunLight.shadow.camera.bottom = -d;
+        }
+        scene.add(sunLight);
+
+        const groundMesh = new THREE.Mesh(
+          new THREE.PlaneGeometry(3200, 3200, 32, 32),
+          new THREE.MeshStandardMaterial({ color: 0x091018, roughness: 0.95, metalness: 0.05 }),
+        );
+        groundMesh.rotation.x = -Math.PI / 2;
+        groundMesh.receiveShadow = true;
+        scene.add(groundMesh);
+
+        generateTrack();
+        initObstaclePool();
+        initSkidmarksAndSmoke();
+      }
+
+      /* ---------------------- 7. 赛道定位 / 物理 / 碰撞 ---------------------- */
+      /**
+       * 基于 LUT 的邻域定位：把车辆投影到赛道中心线，写入本帧的局部坐标系。
+       * 返回路面设计高度（沿行驶方向在相邻采样间插值），修复起伏路段穿地/悬空。
+       * 同时缓存中心点与副法线，供本帧末的护栏钳制复用，免去第二次邻域搜索。
+       */
+      function locateOnTrack(car) {
+        const n = trackLut.count;
+        const pos = trackLut.pos;
+        const win = TRACK_CONFIG.lutSearchWindow;
+        const start = car.lutIndex - win;
+        const end = car.lutIndex + win;
+
+        let best = car.lutIndex;
+        let bestDist = Infinity;
+        for (let k = start; k <= end; k++) {
+          const idx = ((k % n) + n) % n;
+          const o = idx * 3;
+          const dx = pos[o] - car.pos.x;
+          const dz = pos[o + 2] - car.pos.z;
+          const d = dx * dx + dz * dz;
+          if (d < bestDist) { bestDist = d; best = idx; }
+        }
+        car.lutIndex = best;
+
+        const o = best * 3;
+        const bx = trackLut.bin[o], bz = trackLut.bin[o + 2];
+        const cx = pos[o], cz = pos[o + 2];
+        // 有符号横向偏移 = (车 - 中心线) · 副法线
+        car.lateral = (car.pos.x - cx) * bx + (car.pos.z - cz) * bz;
+
+        // 缓存局部坐标系（单帧位移 < 1 m，副法线在本帧内可视为常量）
+        car.trackCx = cx;
+        car.trackCz = cz;
+        car.trackBx = bx;
+        car.trackBz = bz;
+
+        const tx = trackLut.tan[o], tz = trackLut.tan[o + 2];
+        const along = (car.pos.x - cx) * tx + (car.pos.z - cz) * tz;
+        const nextIdx = ((best + (along >= 0 ? 1 : -1)) % n + n) % n;
+        const ratio = Math.min(1, Math.abs(along) / trackLut.spacing);
+        return pos[o + 1] + (pos[nextIdx * 3 + 1] - pos[o + 1]) * ratio;
+      }
+
+      /** 把向量分解到车头坐标系，返回纵向/横向分量（写入 car.vLong / car.vLat） */
+      function decomposeVelocity(car, forward, right) {
+        car.vLong = car.velocity.dot(forward);
+        car.vLat = car.velocity.dot(right);
+      }
+
+      function updateCarPhysics(car, delta) {
+        car.prevPos.copy(car.pos);
+
+        // 1. 地表附着力判别
+        const roadY = locateOnTrack(car);
+        const halfWidth = TRACK_CONFIG.trackWidth / 2;
+        const absLat = Math.abs(car.lateral);
+        const kerbOuter = halfWidth + KERB_BAND;
+        const grassOuter = kerbOuter + GRASS_BAND;
+        let surface;
+        if (absLat < halfWidth - KERB_BAND) surface = SURFACES.tarmac;
+        else if (absLat <= kerbOuter) surface = SURFACES.kerb;
+        else surface = SURFACES.grass;
+        car.surfaceType = surface === SURFACES.tarmac ? 'tarmac' : (surface === SURFACES.kerb ? 'kerb' : 'grass');
+
+        const bumpJitter = surface.jitter > 0
+          ? Math.sin(performance.now() * surface.jitterHz) * surface.jitter
+          : 0;
+
+        // 2. 氮气系统
+        let targetThrottle = inputs.throttle;
+        const targetBrake = inputs.brake;
+        if (inputs.nitro && car.nitroAmount > 0 && countdownTime <= 0) {
+          car.isNitroActive = true;
+          car.nitroAmount = Math.max(0, car.nitroAmount - delta * NITRO_DRAIN);
+          targetThrottle = NITRO_THROTTLE;
+        } else {
+          car.isNitroActive = false;
+          if (!inputs.nitro && car.nitroAmount < 100) {
+            car.nitroAmount = Math.min(100, car.nitroAmount + delta * NITRO_REGEN);
+          }
+        }
+        car.nitroFlame.material.opacity = car.isNitroActive ? 0.85 : 0;
+        if (car.nitroGroup) {
+          car.nitroGroup.scale.z = car.isNitroActive ? 1 + Math.random() * 0.5 : 0.001;
+        }
+
+        const grip = surface.grip;
+        const spec = car.spec;
+
+        // 3. 横向抓地圆：a_lat = (基础抓地 + 下压力·v²) × 路面系数
+        //    它是转向能力的硬上限，也是 G 值与漂移判定的唯一来源。
+        const vAbs = Math.max(4, Math.abs(car.vLong || 0));
+        const aLatMax = (spec.latGripBase + spec.latGripDownforce * vAbs * vAbs) * grip;
+
+        /* 4. 转向：物理舵角与视觉舵角分离。
+         *    物理舵角上限取"恰好把车头转到抓地圆极限"所需的阿克曼角
+         *    （tan δ = a_lat·L / v²，再留一点余量），因此高速自动变沉，
+         *    玩家必须减速过弯；视觉舵角仍按满舵偏转，避免车轮看着不动。
+         */
+        const steerLimitPhys = Math.min(
+          STEER_MAX_RAD,
+          GRIP_STEER_HEADROOM * aLatMax * spec.wheelbase / (vAbs * vAbs),
+        );
+        const steerLerp = Math.min(1, STEER_FILTER_RATE * delta);
+        car.steerAngle += (inputs.steer * steerLimitPhys - car.steerAngle) * steerLerp;
+        car.visualSteer += (inputs.steer * STEER_MAX_RAD - car.visualSteer) * steerLerp;
+        car.wheels[0].rotation.y = car.visualSteer;
+        car.wheels[1].rotation.y = car.visualSteer;
+
+        // 5. 车头运动学偏航（阿克曼）：v_lat 由轮胎力在下一步负责拉回
+        const yawRate = (car.vLong / spec.wheelbase) * Math.tan(car.steerAngle);
+        car.heading += yawRate * delta;
+
+        const forward = S.v2.copy(S.axisZneg).applyAxisAngle(S.axisY, car.heading);
+        const right = S.v3.copy(S.axisXpos).applyAxisAngle(S.axisY, car.heading);
+
+        // 6. 把当前世界速度分解进新车头坐标系（车头已转，故产生侧偏角）
+        decomposeVelocity(car, forward, right);
+
+        // 7. 纵向动力：动力随速衰减 + 路面阻尼，保证稳态极速恰为标称值
+        if (countdownTime > 0) {
+          // 倒计时期间锁死动力，仅保留刹车
+          car.vLong = Math.max(-REVERSE_LIMIT, Math.min(0, car.vLong - car.vLong * delta * 8));
+        } else {
+          const taper = car.isNitroActive ? spec.powerTaper * NITRO_POWER_TAPER_RELIEF : spec.powerTaper;
+          const power = targetThrottle * spec.accelRate * grip
+            * Math.max(0, 1 - taper * (Math.abs(car.vLong) / spec.maxSpeed));
+          let brakeForce = targetBrake * spec.brakeRate * grip;
+          if (inputs.handbrake) brakeForce += spec.brakeRate * HANDBRAKE_BRAKE_MULT;
+
+          car.vLong += (power - brakeForce) * delta;
+          car.vLong -= car.vLong * surface.drag * delta;
+          const currentMax = car.isNitroActive ? spec.maxSpeed * NITRO_SPEED_BOOST : spec.maxSpeed;
+          car.vLong = Math.max(-REVERSE_LIMIT, Math.min(currentMax, car.vLong));
+        }
+
+        /* 8. 横向轮胎力：把侧偏速度拉回 0，但受抓地圆封顶。
+         *    latDamp 越小（草地、手刹）轮胎越难拉回 → 持续的滑移即漂移。
+         *    超出上限的部分无法被抵消，表现为转向不足（推头冲出弯道外侧）。
+         */
+        let latDamp = surface.latDamp;
+        if (inputs.handbrake) latDamp = Math.min(latDamp, HANDBRAKE_LAT_DAMP);
+        const latDecel = Math.max(-aLatMax, Math.min(aLatMax, car.vLat * latDamp));
+        car.vLat -= latDecel * delta;
+        car.lateralSlip = car.vLat;
+
+        // 9. 合成世界速度并积分位置
+        car.velocity.copy(forward).multiplyScalar(car.vLong).addScaledVector(right, car.vLat);
+        car.speed = car.vLong;
+        car.pos.addScaledVector(car.velocity, delta);
+
+        // 车身贴地（弹簧阻尼收敛，避免直接赋值造成的高频跳变）
+        car.pos.y += (roadY - car.pos.y) * dampByDelta(0.35, delta);
+
+        // 10. 护栏钳制：草地缓冲带尽头为硬边界，贴墙刮擦持续掉耐久并掉速
+        const barrierLimit = grassOuter - GAMEPLAY.BARRIER_HALF_WIDTH;
+        const newLat = (car.pos.x - car.trackCx) * car.trackBx + (car.pos.z - car.trackCz) * car.trackBz;
+        if (Math.abs(newLat) > barrierLimit) {
+          const sign = newLat > 0 ? 1 : -1;
+          const clamped = barrierLimit * sign;
+          car.pos.x += (clamped - newLat) * car.trackBx;
+          car.pos.z += (clamped - newLat) * car.trackBz;
+          car.lateral = clamped;
+          // 抹掉指向墙外的横向速度分量
+          const vLatNow = (car.velocity.x * car.trackBx + car.velocity.z * car.trackBz);
+          if (vLatNow * sign > 0) {
+            car.velocity.x -= vLatNow * car.trackBx;
+            car.velocity.z -= vLatNow * car.trackBz;
+          }
+          car.vLong *= Math.pow(GAMEPLAY.BARRIER_SPEED_KEEP, delta);
+          applyDamage(GAMEPLAY.BARRIER_DAMAGE_RATE * delta, true);
+          if (Math.abs(vLatNow) > 3) {
+            flashDangerAlert();
+            AudioFX.crash();
+            Haptics.crash();
+          }
+        }
+
+        const vMag = Math.sqrt(car.vLong * car.vLong + car.vLat * car.vLat);
+
+        // 11. 漂移判定：以实际侧偏速度为准（不再依赖舵角阈值）
+        car.isDrifting = Math.abs(car.vLat) > SLIP_DRIFT_MIN && Math.abs(car.vLong) > DRIFT_SPEED_FLOOR;
+
+        // 12. 里程与积分：浮点累加 + 连击倍率，彻底消除逐帧取整丢分与帧率耦合
+        if (vMag > 0) {
+          const distanceDelta = vMag * delta;
+          totalDistanceMeters += distanceDelta;
+          scoreAccumulator += distanceDelta * (1 + vMag / 40) * comboMultiplier();
+          const whole = Math.floor(scoreAccumulator);
+          if (whole > 0) {
+            totalScore += whole;
+            scoreAccumulator -= whole;
+          }
+        }
+
+        // 13. 连击窗口倒计时
+        if (comboCount > 0) {
+          comboTimer -= delta;
+          if (comboTimer <= 0) comboCount = 0;
+        }
+
+        // 14. 障碍物碰撞（扫掠连续检测）与闪避判定
+        if (checkObstacleCollisions(car, forward)) {
+          // 撞击改写了 vLong/vLat，必须重新合成世界速度，
+          // 否则下一帧从旧 velocity 反解会把掉速覆盖回去。
+          car.velocity.copy(forward).multiplyScalar(car.vLong).addScaledVector(right, car.vLat);
+          car.speed = car.vLong;
+        }
+        if (!isRacing) return; // 耐久归零已触发报废，跳过本帧余下姿态更新
+
+        // 15. 悬挂与车身姿态
+        const targetRoll = -car.visualSteer * (vMag / spec.maxSpeed) * 0.14;
+        const targetPitch = (targetThrottle - targetBrake) * 0.05 + bumpJitter;
+        car.suspensionRoll += (targetRoll - car.suspensionRoll) * SUSPENSION_ROLL_RATE * delta;
+        car.suspensionPitch += (targetPitch - car.suspensionPitch) * SUSPENSION_PITCH_RATE * delta;
+
+        // 横向 G 值：取本帧轮胎实际施加的横向加速度，物理量级 0 ~ 2.5 G
+        car.gForce = Math.abs(latDecel) / G_FORCE_DIVISOR;
+
+        car.mesh.position.copy(car.pos);
+        car.mesh.rotation.set(car.suspensionPitch, car.heading, car.suspensionRoll);
+
+        car.wheels[0].position.y = car.wheels[0].userData.baseY - car.suspensionPitch * 0.5;
+        car.wheels[1].position.y = car.wheels[1].userData.baseY - car.suspensionPitch * 0.5;
+        car.wheels[2].position.y = car.wheels[2].userData.baseY + car.suspensionPitch * 0.5;
+        car.wheels[3].position.y = car.wheels[3].userData.baseY + car.suspensionPitch * 0.5;
+
+        const wheelRoll = (car.vLong / WHEEL_RADIUS) * delta;
+        for (let i = 0; i < 4; i++) car.wheels[i].children[0].rotation.x += wheelRoll;
+
+        // 16. 漂移胎印（需后轮世界坐标，仅在漂移时计算）
+        if (car.isDrifting) {
+          car.wheels[2].getWorldPosition(car.wheelWorldL);
+          car.wheels[3].getWorldPosition(car.wheelWorldR);
+          if (car.lastWheelL.lengthSq() > 0) {
+            recordSkidPair(car.wheelWorldL, car.wheelWorldR, car.lastWheelL, car.lastWheelR);
+            emitSmoke(car.wheelWorldL);
+            emitSmoke(car.wheelWorldR);
+          }
+          car.lastWheelL.copy(car.wheelWorldL);
+          car.lastWheelR.copy(car.wheelWorldR);
+        } else {
+          car.lastWheelL.set(0, 0, 0);
+          car.lastWheelR.set(0, 0, 0);
+        }
+
+        updateLapProgress(car);
+      }
+
+      /**
+       * 线段 prev→curr 与球体 (cx,cy,cz,r) 的最近距离测试。
+       * 修复旧版逐帧点距判定在极速/掉帧下产生的穿模漏判。
+       */
+      function segmentHitsSphere(prev, curr, cx, cy, cz, r) {
+        const dx = curr.x - prev.x, dy = curr.y - prev.y, dz = curr.z - prev.z;
+        const fx = prev.x - cx, fy = prev.y - cy, fz = prev.z - cz;
+        const segLenSq = dx * dx + dy * dy + dz * dz;
+        let t = 0;
+        if (segLenSq > 1e-6) t = -(fx * dx + fy * dy + fz * dz) / segLenSq;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const qx = fx + dx * t, qy = fy + dy * t, qz = fz + dz * t;
+        return (qx * qx + qy * qy + qz * qz) <= r * r;
+      }
+
+      /** 当前连击对应的积分倍率（无连击为 1.0） */
+      function comboMultiplier() {
+        return 1 + Math.min(comboCount, GAMEPLAY.COMBO_MAX);
+      }
+
+      /** 撞击后断连并给出反馈 */
+      function breakCombo() {
+        if (comboCount > 0) {
+          comboCount = 0;
+          comboTimer = 0;
+        }
+      }
+
+      /**
+       * 障碍交互：撞击判定 + 闪避/擦身判定。
+       * forward 由物理步传入（本帧车头坐标系），避免重复构造向量。
+       * 返回 true 表示本帧发生撞击，调用方需据此重新合成世界速度。
+       */
+      function checkObstacleCollisions(car, forward) {
+        let hitThisFrame = false;
+
+        for (let i = 0; i < activeObstacles.length; i++) {
+          const obs = activeObstacles[i];
+          if (!obs.visible) continue;
+          const ud = obs.userData;
+          const ox = obs.position.x;
+          const oy = obs.position.y + ud.lift;
+          const oz = obs.position.z;
+
+          // 1. 撞击判定（扫掠连续检测，半径按障碍变体取值）
+          if (!ud.hit && segmentHitsSphere(car.prevPos, car.pos, ox, oy, oz, ud.hitRadius)) {
+            ud.hit = true;
+            if (ud.knockable) {
+              ud.knocked = true;
+              ud.knockT = 0;
+            }
+            car.vLong *= ud.speedKeep;
+            car.vLat *= ud.speedKeep;
+            hitThisFrame = true;
+            applyDamage(ud.damage); // 非持续型损耗，内部已断连
+            flashDangerAlert();
+            AudioFX.crash();
+            Haptics.crash();
+            continue;
+          }
+
+          // 2. 闪避 / 擦身判定：障碍已处于身后，且横向间隙落在有效区间内
+          if (!ud.evaded && !ud.hit) {
+            const toX = ox - car.pos.x, toY = oy - car.pos.y, toZ = oz - car.pos.z;
+            const along = toX * forward.x + toY * forward.y + toZ * forward.z;
+            if (along < -COLLISION.EVADE_BACK) {
+              const distSq = toX * toX + toY * toY + toZ * toZ;
+              let latSq = distSq - along * along;
+              if (latSq < 0) latSq = 0;
+              if (latSq < COLLISION.EVADE_LATERAL * COLLISION.EVADE_LATERAL) {
+                ud.evaded = true;
+                totalEvadedCount++;
+
+                // 擦身而过：间隙比常规闪避更贴，风险更高 → 额外积分 + 回充耐久
+                const isNearMiss = latSq < GAMEPLAY.NEAR_MISS_LATERAL * GAMEPLAY.NEAR_MISS_LATERAL;
+                comboCount = Math.min(GAMEPLAY.COMBO_MAX, comboCount + 1);
+                comboTimer = GAMEPLAY.COMBO_WINDOW;
+                const mult = comboMultiplier();
+                totalScore += Math.round((COLLISION.EVASION_BONUS
+                  + (isNearMiss ? GAMEPLAY.NEAR_MISS_BONUS : 0)) * mult);
+
+                if (isNearMiss) {
+                  durability = Math.min(100, durability + GAMEPLAY.NEAR_MISS_REPAIR);
+                  hudCache.durability = -1;
+                  AudioFX.nearMiss();
+                  Haptics.boost();
+                } else {
+                  AudioFX.blip();
+                  Haptics.blip();
+                }
+              }
+            }
+          }
+        }
+
+        return hitThisFrame;
+      }
+
+      /**
+       * 施加耐久损失。
+       * @param {number} amount 损失百分比
+       * @param {boolean} continuous 是否为持续型损耗（护栏刮擦），仅在跨越告警阈值时提示
+       */
+      function applyDamage(amount, continuous) {
+        const before = durability;
+        durability = Math.max(0, durability - amount);
+        hudCache.durability = -1; // 强制刷新耐久 HUD
+        if (!continuous) breakCombo();
+        if (durability <= 0) {
+          triggerGameOver();
+        } else if (continuous && before > COLLISION.CRITICAL_DURABILITY
+          && durability <= COLLISION.CRITICAL_DURABILITY) {
+          flashDangerAlert();
+        }
+      }
+
+      function updateLapProgress(car) {
+        const n = trackLut.count;
+        const prevT = car.prevLutIndex === undefined ? car.lutIndex : car.prevLutIndex;
+        // 由后向前跨越起点视为完成一圈：递增圈数并按更高密度重排障碍物
+        if (prevT > n * 0.88 && car.lutIndex < n * 0.12) {
+          lapCount++;
+          populateTrackObstacles();
+        }
+        car.prevLutIndex = car.lutIndex;
+      }
+
+      /* ---------------------- 8. 多视角摄像机与视口自适应 ---------------------- */
+      function updateCamera(delta) {
+        if (!playerCar) return;
+        const pPos = playerCar.pos;
+        const heading = playerCar.heading;
+        const speedKmh = Math.abs(playerCar.speed * 3.6);
+
+        // 检测当前是否处于移动端竖屏（长宽比 < 1）
+        const isPortrait = window.innerHeight > window.innerWidth;
+        const portraitBackOffset = isPortrait ? 2.4 : 0;
+        const portraitHeightOffset = isPortrait ? 1.5 : 0;
+        const portraitFovGain = isPortrait ? 12 : 0; // 竖屏下自动拉开视锥与俯仰角，确保前瞻视野不狭窄
+
+        let shakeX = 0, shakeY = 0;
+        if (speedKmh > CAMERA.shakeStartKmh) {
+          const intensity = ((speedKmh - CAMERA.shakeStartKmh) / CAMERA.shakeRangeKmh) * CAMERA.shakeMaxRad;
+          shakeY = (Math.random() - 0.5) * intensity;
+          shakeX = (Math.random() - 0.5) * intensity;
+        }
+
+        if (cameraViewIndex === 0) {
+          const backOffset = 7.6 + (speedKmh / 300) * 2.2 + portraitBackOffset;
+          const behind = S.v3.copy(S.axisZpos).applyAxisAngle(S.axisY, heading);
+          S.v4.copy(pPos).addScaledVector(behind, backOffset);
+          S.v4.y = pPos.y + 2.85 + portraitHeightOffset + shakeY;
+          S.v4.x += shakeX;
+          camera.position.lerp(S.v4, dampByDelta(CAMERA.followLerp, delta));
+
+          const ahead = S.v3.copy(S.axisZneg).applyAxisAngle(S.axisY, heading);
+          S.v5.copy(pPos).addScaledVector(ahead, 4);
+          S.v5.y = pPos.y + 1.2 + (isPortrait ? 0.6 : 0);
+          camera.lookAt(S.v5);
+          camera.fov = CAMERA.baseFov + (speedKmh / 300) * CAMERA.speedFovGain + portraitFovGain;
+          camera.updateProjectionMatrix();
+
+        } else if (cameraViewIndex === 1) {
+          const ahead = S.v3.copy(S.axisZneg).applyAxisAngle(S.axisY, heading);
+          S.v4.copy(pPos).addScaledVector(ahead, 0.65);
+          S.v4.y = pPos.y + 1.1 + (isPortrait ? 0.35 : 0) + shakeY;
+          S.v4.x += shakeX;
+          camera.position.copy(S.v4);
+          S.v5.copy(S.v4).addScaledVector(ahead, 20);
+          camera.lookAt(S.v5);
+          const targetFov = 66 + (isPortrait ? 8 : 0);
+          if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
+
+        } else {
+          S.v4.copy(pPos).add(S.v5.set(0, isPortrait ? 32 : 26, isPortrait ? 24 : 19));
+          camera.position.lerp(S.v4, dampByDelta(CAMERA.overheadLerp, delta));
+          camera.lookAt(pPos);
+          const targetFov = 55 + (isPortrait ? 10 : 0);
+          if (camera.fov !== targetFov) { camera.fov = targetFov; camera.updateProjectionMatrix(); }
+        }
+      }
+
+      /* ---------------------- 9. HUD 渲染（脏写优化） ---------------------- */
+      function cacheDom() {
+        const ids = [
+          'game-container', 'start-screen', 'hud', 'hud-score', 'hud-distance', 'hud-evaded',
+          'hud-durability-fill', 'hud-durability-val', 'hud-surface-tag', 'hud-danger-alert',
+          'hud-speed', 'hud-gear', 'hud-gforce', 'hud-nitro-fill', 'cam-toggle-btn',
+          'audio-toggle-btn', 'start-btn', 'restart-btn', 'game-over-modal', 'finish-stats',
+          'finish-title', 'finish-desc', 'car-veneno', 'car-gt3', 'btn-gas', 'btn-brake',
+          'btn-nitro', 'btn-handbrake', 'btn-steer-left', 'btn-steer-right', 'portrait-tip',
+          'fatal-screen', 'hud-combo', 'hud-best', 'lobby-best', 'pause-overlay',
+        ];
+        ids.forEach(id => { dom[id] = document.getElementById(id); });
+      }
+
+      /**
+       * 请求全屏与屏幕方向锁定（针对支持 Screen Orientation API 的 Android / Chrome）。
+       * 关键修复：移动端进入全屏的瞬间浏览器会派发一次伪 blur / visibilitychange，
+       * 若此时 isRacing 已为 true，会被自动暂停逻辑误判为"切后台"，导致刚发车就显示"已暂停"。
+       * 因此在全屏与方向切换的过渡窗口内临时抑制伪失焦暂停。
+       */
+      let blurPauseGuardTimer = 0;
+      function armBlurPauseGuard(ms) {
+        suppressBlurPause = true;
+        clearTimeout(blurPauseGuardTimer);
+        blurPauseGuardTimer = setTimeout(() => { suppressBlurPause = false; }, ms);
+      }
+
+      async function requestLandscapeLock() {
+        armBlurPauseGuard(1200); // 覆盖全屏动画 + 旋转锁定的过渡时长
+        try {
+          if (document.documentElement.requestFullscreen && !document.fullscreenElement) {
+            await document.documentElement.requestFullscreen();
+          }
+          if (screen.orientation && screen.orientation.lock) {
+            await screen.orientation.lock('landscape');
+          }
+        } catch (err) {
+          // 浏览器或 iOS Safari 限制自动横屏锁定属于预期，CSS 遮罩会持续强制要求横屏
+        }
+      }
+
+      function updateSurfaceHud(car) {
+        if (hudCache.surface === car.surfaceType) return;
+        hudCache.surface = car.surfaceType;
+        const surface = SURFACES[car.surfaceType];
+        dom['hud-surface-tag'].innerText = surface.label;
+        dom['hud-surface-tag'].className = surface.cls;
+      }
+
+      function updateDashboardHud(car) {
+        const speedKmh = Math.round(Math.abs(car.speed * 3.6));
+        if (hudCache.speed !== speedKmh) {
+          hudCache.speed = speedKmh;
+          dom['hud-speed'].innerText = speedKmh;
+        }
+
+        const gear = speedKmh === 0 ? '空挡' : (car.speed < 0 ? '倒挡' : (Math.min(6, 1 + Math.floor(speedKmh / 55)) + ' 挡'));
+        if (hudCache.gear !== gear) {
+          hudCache.gear = gear;
+          dom['hud-gear'].innerText = gear;
+        }
+
+        const nitro = Math.round(car.nitroAmount);
+        if (hudCache.nitro !== nitro) {
+          hudCache.nitro = nitro;
+          dom['hud-nitro-fill'].style.width = nitro + '%';
+        }
+
+        const gText = car.gForce.toFixed(1);
+        if (hudCache.gforce !== gText) {
+          hudCache.gforce = gText;
+          dom['hud-gforce'].innerText = gText + ' 重力加速度';
+        }
+
+        updateSurfaceHud(car);
+      }
+
+      function updateScoreHud() {
+        if (hudCache.score !== totalScore) {
+          hudCache.score = totalScore;
+          dom['hud-score'].innerText = totalScore + ' 分';
+        }
+        const meters = Math.round(totalDistanceMeters);
+        if (hudCache.distance !== meters) {
+          hudCache.distance = meters;
+          dom['hud-distance'].innerText = meters + ' 米';
+        }
+        if (hudCache.evaded !== totalEvadedCount) {
+          hudCache.evaded = totalEvadedCount;
+          dom['hud-evaded'].innerText = totalEvadedCount;
+        }
+        // 护栏刮擦为连续损耗，durability 为浮点；取整后再比对，避免每帧写 DOM
+        const durShown = Math.round(durability);
+        if (hudCache.durability !== durShown) {
+          hudCache.durability = durShown;
+          dom['hud-durability-fill'].style.width = durShown + '%';
+          dom['hud-durability-val'].innerText = durShown + '%';
+          const critical = durShown <= COLLISION.CRITICAL_DURABILITY;
+          dom['hud-durability-val'].className = 'durability-val' + (critical ? ' critical' : '');
+          dom['hud-durability-fill'].className = 'durability-bar-fill' + (critical ? ' critical' : '');
+        }
+        updateComboHud();
+      }
+
+      function flashDangerAlert() {
+        const el = dom['hud-danger-alert'];
+        el.classList.add('show');
+        clearTimeout(dangerAlertTimer);
+        dangerAlertTimer = setTimeout(() => el.classList.remove('show'), 1200);
+      }
+
+      /** 连击倍率与耐久取整显示（刮擦为连续损耗，durability 为浮点） */
+      function updateComboHud() {
+        if (hudCache.combo !== comboCount) {
+          hudCache.combo = comboCount;
+          const el = dom['hud-combo'];
+          if (!el) return;
+          if (comboCount >= 2) {
+            el.innerText = '连击 x' + comboMultiplier().toFixed(0);
+            el.classList.add('show');
+          } else {
+            el.classList.remove('show');
+          }
+        }
+        if (hudCache.best !== bestScore) {
+          hudCache.best = bestScore;
+          const el = dom['hud-best'];
+          if (el) el.innerText = bestScore > 0 ? '最高 ' + bestScore : '';
+        }
+      }
+
+      /* ---------------------- 9b. 障碍预告雷达 ---------------------- */
+      /* 闪避玩法若缺少前瞻通道，失败会被归因为"看不清"而非"反应慢"。
+       * 这里在前方未处理障碍正上方悬浮一个发光标记，颜色随距离由红转青，
+       * 让玩家能提前判断该往哪条线走。仅复用固定数量网格，不产生逐帧分配。
+       */
+      const RADAR_MARK_COUNT = 3;
+      const RADAR_RANGE_NEAR = 40;    // 最近警示距离（米）→ 红色，需立即处置
+      const RADAR_RANGE_FAR = 220;    // 最远可见距离（米）→ 青色，仅作远望提示
+      const RADAR_HEIGHT = 4.2;       // 悬浮高度（米）
+      const RADAR_LAT_CULL_SQ = 900;  // 侧向偏离超过 30 m 不作提示（米²）
+      const radarPicked = new Array(RADAR_MARK_COUNT).fill(null);
+
+      function initObstacleRadar() {
+        radarGroup = new THREE.Group();
+        radarArrows.length = 0;
+        const geo = new THREE.ConeGeometry(1.1, 2.4, 4);
+        geo.rotateX(Math.PI); // 尖端朝下，指向障碍所在车道
+        for (let i = 0; i < RADAR_MARK_COUNT; i++) {
+          const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({
+            color: 0x00f0ff, transparent: true, opacity: 0.85,
+          }));
+          mesh.visible = false;
+          mesh.frustumCulled = false;
+          radarGroup.add(mesh);
+          radarArrows.push(mesh);
+        }
+        scene.add(radarGroup);
+      }
+
+      /**
+       * 刷新雷达标记。car 为 null 时全部隐藏（返回大厅时调用）。
+       * 逐轮贪心取最近者（共 RADAR_MARK_COUNT 轮）而非全量排序，
+       * 障碍总数上限 34，扫描成本恒定且无临时数组分配。
+       */
+      function updateRadar(car) {
+        if (!radarGroup) return;
+        for (let i = 0; i < radarArrows.length; i++) radarArrows[i].visible = false;
+        if (!car || !isRacing) return;
+
+        const forward = S.v2.copy(S.axisZneg).applyAxisAngle(S.axisY, car.heading);
+        for (let s = 0; s < RADAR_MARK_COUNT; s++) radarPicked[s] = null;
+
+        for (let round = 0; round < RADAR_MARK_COUNT; round++) {
+          let bestObs = null;
+          let bestDist = Infinity;
+          for (let i = 0; i < activeObstacles.length; i++) {
+            const obs = activeObstacles[i];
+            const ud = obs.userData;
+            if (!obs.visible || ud.hit || ud.evaded) continue;
+            let already = false;
+            for (let p = 0; p < round; p++) {
+              if (radarPicked[p] === obs) { already = true; break; }
+            }
+            if (already) continue;
+
+            const dx = obs.position.x - car.pos.x;
+            const dz = obs.position.z - car.pos.z;
+            const along = dx * forward.x + dz * forward.z;
+            if (along < 12 || along > RADAR_RANGE_FAR) continue;
+            const latSq = (dx * dx + dz * dz) - along * along;
+            if (latSq > RADAR_LAT_CULL_SQ) continue;
+            if (along < bestDist) { bestDist = along; bestObs = obs; }
+          }
+          if (!bestObs) break;
+          radarPicked[round] = bestObs;
+
+          const mark = radarArrows[round];
+          mark.position.copy(bestObs.position);
+          mark.position.y = bestObs.position.y + RADAR_HEIGHT;
+          mark.rotation.y = car.heading;
+          // 距离归一化：0 = 最近（红），1 = 最远（青）
+          const k = Math.max(0, Math.min(1,
+            (bestDist - RADAR_RANGE_NEAR) / (RADAR_RANGE_FAR - RADAR_RANGE_NEAR)));
+          mark.material.color.setRGB(1 - k, 0.15 + k * 0.79, 0.2 + k * 0.8);
+          mark.visible = true;
+        }
+      }
+
+      /* ---------------------- 10. 输入系统（三源分离） ---------------------- */
+      function syncTouchSteer() {
+        touchState.steerValue = (touchState.right ? 1 : 0) - (touchState.left ? 1 : 0);
+      }
+
+      function pollControllerInputs() {
+        // 键盘源
+        const keyThrottle = (keys.KeyW || keys.ArrowUp) ? 1 : 0;
+        const keyBrake = (keys.KeyS || keys.ArrowDown) ? 1 : 0;
+        const keySteer = ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0);
+        const keyHandbrake = !!keys.Space;
+        const keyNitro = !!(keys.ShiftLeft || keys.ShiftRight);
+
+        // 手柄源
+        padState.active = false;
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        const pad = gamepads && gamepads[0];
+        if (pad) {
+          padState.active = true;
+          padState.steer = Math.abs(pad.axes[0]) > 0.15 ? pad.axes[0] : 0;
+          padState.throttle = pad.buttons[7] ? pad.buttons[7].value : 0;
+          padState.brake = pad.buttons[6] ? pad.buttons[6].value : 0;
+          padState.handbrake = !!(pad.buttons[0] && pad.buttons[0].pressed);
+          padState.nitro = !!(pad.buttons[1] && pad.buttons[1].pressed);
+        }
+
+        // 三源合成：取最强输入，互不覆盖（修复旧版 touchend 清零截断另一侧按键）
+        const touchThrottle = touchState.gas ? 1 : 0;
+        const touchBrake = touchState.brake ? 1 : 0;
+        const touchNitro = touchState.nitro;
+        const touchHandbrake = touchState.handbrake;
+
+        inputs.throttle = Math.max(touchThrottle, keyThrottle, padState.throttle);
+        inputs.brake = Math.max(touchBrake, keyBrake, padState.brake);
+        inputs.nitro = touchNitro || keyNitro || padState.nitro;
+        inputs.handbrake = touchHandbrake || keyHandbrake || padState.handbrake;
+
+        // 转向取最强输入：逐个比较而非构造候选数组，保持主循环零分配
+        let steer = touchState.steerValue;
+        if (Math.abs(keySteer) > Math.abs(steer)) steer = keySteer;
+        if (padState.active && Math.abs(padState.steer) > Math.abs(steer)) steer = padState.steer;
+        inputs.steer = steer;
+      }
+
+      function resetAllInputs() {
+        inputs.throttle = 0; inputs.brake = 0; inputs.steer = 0;
+        inputs.handbrake = false; inputs.nitro = false;
+        touchState.gas = false; touchState.brake = false; touchState.nitro = false; touchState.handbrake = false;
+        touchState.left = false; touchState.right = false;
+        touchState.steerValue = 0;
+        Object.keys(keys).forEach(k => { keys[k] = false; });
+        document.querySelectorAll('.pressed').forEach(el => el.classList.remove('pressed'));
+      }
+
+      function bindTouchControl(id, onDown, onUp) {
+        const el = dom[id];
+        if (!el) return;
+        let activeTouchId = null;
+
+        const down = (e) => {
+          e.preventDefault();
+          if (e.changedTouches && e.changedTouches.length > 0) {
+            // 记录当前绑定的 touch identifier，避免其他手指在同一个按钮上抬起时产生错误释放
+            if (activeTouchId === null) {
+              activeTouchId = e.changedTouches[0].identifier;
+              el.classList.add('pressed');
+              onDown();
+            }
+          } else {
+            el.classList.add('pressed');
+            onDown();
+          }
+        };
+
+        const up = (e) => {
+          if (e) e.preventDefault();
+          if (e && e.changedTouches) {
+            for (let i = 0; i < e.changedTouches.length; i++) {
+              if (e.changedTouches[i].identifier === activeTouchId) {
+                activeTouchId = null;
+                el.classList.remove('pressed');
+                onUp();
+                break;
+              }
+            }
+          } else {
+            activeTouchId = null;
+            el.classList.remove('pressed');
+            onUp();
+          }
+        };
+
+        el.addEventListener('touchstart', down, { passive: false });
+        el.addEventListener('touchend', up, { passive: false });
+        el.addEventListener('touchcancel', up, { passive: false });
+        // 桌面端鼠标调试支持
+        el.addEventListener('mousedown', down);
+      }
+
+      function toggleCameraView() {
+        cameraViewIndex = (cameraViewIndex + 1) % 3;
+        const names = ['第三人称 (追随)', '引擎盖 (近身视界)', '俯视竞技 (上帝视角)'];
+        dom['cam-toggle-btn'].innerText = '📷 视角: ' + names[cameraViewIndex];
+      }
+
+      function selectVehicle(type) {
+        if (!VEHICLES[type]) return;
+        selectedVehicleType = type;
+        dom['car-veneno'].classList.toggle('active', type === 'veneno');
+        dom['car-gt3'].classList.toggle('active', type === 'gt3');
+        // 展台模型即时换色（修复旧版选车后模型不联动的视觉脱节）
+        if (playerCar) playerCar.paintMat.color.setHex(VEHICLES[type].color);
+      }
+
+      function initEvents() {
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('orientationchange', onWindowResize);
+
+        window.addEventListener('keydown', (e) => {
+          keys[e.code] = true;
+          if (e.code === 'KeyC') toggleCameraView();
+          if (e.code === 'KeyM') AudioFX.toggleMute();
+          if (e.code === 'Escape' || e.code === 'KeyP') togglePause();
+          if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) >= 0) e.preventDefault();
+        });
+        window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+        // 失焦/切后台立即归零输入，避免"按键卡死"持续加速；比赛中同时挂起
+        // 移动端进入全屏或旋转时会派发一次伪 blur，故延迟复核真实焦点，杜绝"刚发车就暂停"
+        window.addEventListener('blur', () => {
+          resetAllInputs();
+          setTimeout(() => {
+            if (suppressBlurPause) return;
+            if (document.hidden) return; // 真实切后台由 visibilitychange 处理
+            if (document.hasFocus && !document.hasFocus() && isRacing && !isPaused) togglePause();
+          }, 140);
+        });
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            resetAllInputs();
+            // 全屏/旋转过渡窗口内的伪隐藏不触发暂停
+            if (!suppressBlurPause && isRacing && !isPaused) togglePause();
+          }
+          lastFrameTime = performance.now();
+        });
+
+        // 暂停遮罩支持点击/触摸恢复（移动端无实体键盘，必须可点按继续）
+        const pauseEl = dom['pause-overlay'];
+        if (pauseEl) {
+          const resume = (e) => {
+            if (e) e.preventDefault();
+            if (isPaused) togglePause();
+          };
+          pauseEl.addEventListener('pointerup', resume);
+          pauseEl.addEventListener('keydown', (e) => {
+            if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); resume(); }
+          });
+        }
+
+        bindTouchControl('btn-gas', () => { touchState.gas = true; Haptics.tap(); }, () => { touchState.gas = false; });
+        bindTouchControl('btn-brake', () => { touchState.brake = true; Haptics.tap(); }, () => { touchState.brake = false; });
+        bindTouchControl('btn-nitro', () => { touchState.nitro = true; Haptics.boost(); }, () => { touchState.nitro = false; });
+        bindTouchControl('btn-handbrake', () => { touchState.handbrake = true; Haptics.drift(); }, () => { touchState.handbrake = false; });
+        bindTouchControl('btn-steer-left', () => { touchState.left = true; syncTouchSteer(); Haptics.tap(); }, () => { touchState.left = false; syncTouchSteer(); });
+        bindTouchControl('btn-steer-right', () => { touchState.right = true; syncTouchSteer(); Haptics.tap(); }, () => { touchState.right = false; syncTouchSteer(); });
+        // 鼠标按下后在任意位置抬起也要释放
+        window.addEventListener('mouseup', () => {
+          document.querySelectorAll('.pressed').forEach(el => {
+            el.classList.remove('pressed');
+            if (el === dom['btn-gas']) touchState.gas = false;
+            else if (el === dom['btn-brake']) touchState.brake = false;
+            else if (el === dom['btn-nitro']) touchState.nitro = false;
+            else if (el === dom['btn-handbrake']) touchState.handbrake = false;
+            else if (el === dom['btn-steer-left']) { touchState.left = false; syncTouchSteer(); }
+            else if (el === dom['btn-steer-right']) { touchState.right = false; syncTouchSteer(); }
+          });
+        });
+
+        // 移动端手势防误触增强（全面阻断 Safari / Chrome 的边缘返回、双击缩放与下拉刷新）
+        document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+        document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
+        document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
+        document.addEventListener('dblclick', (e) => e.preventDefault(), { passive: false });
+
+        dom['cam-toggle-btn'].addEventListener('click', toggleCameraView);
+        dom['audio-toggle-btn'].addEventListener('click', () => AudioFX.toggleMute());
+        dom['start-btn'].addEventListener('click', startRace);
+        dom['restart-btn'].addEventListener('click', returnToLobby);
+
+        ['car-veneno', 'car-gt3'].forEach(id => {
+          const el = dom[id];
+          const type = el.dataset.vehicle;
+          el.addEventListener('click', () => { AudioFX.init(); selectVehicle(type); });
+          el.addEventListener('keydown', (e) => {
+            if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); selectVehicle(type); }
+          });
+        });
+
+        // WebGL 上下文丢失保护：停止循环并提示，避免整页崩溃
+        const canvas = renderer.domElement;
+        canvas.addEventListener('webglcontextlost', (e) => {
+          e.preventDefault();
+          isPaused = true;
+          dom['fatal-screen'].classList.add('show');
+          dom['fatal-screen'].querySelector('h2').innerText = '3D 渲染上下文已丢失';
+          dom['fatal-screen'].querySelector('p').innerText = '请刷新页面重新开始赛事。';
+        }, false);
+      }
+
+      function onWindowResize() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        camera.aspect = width / height;
+        camera.updateProjectionMatrix();
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, isMobileDevice ? 1.5 : 2.0));
+      }
+
+      /* ---------------------- 11. 程序化音频（Web Audio 合成，零外部资源） ---------------------- */
+      const AudioFX = (function () {
+        let ctx = null, master = null, ready = false, muted = false;
+        let engineOscA, engineOscB, engineFilter, engineGain;
+        let screechGain, nitroGain, noiseBuffer;
+
+        function init() {
+          if (ready) { if (ctx.state === 'suspended') ctx.resume(); return; }
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return;
+          try {
+            ctx = new AC();
+            master = ctx.createGain();
+            master.gain.value = muted ? 0 : 0.5;
+            master.connect(ctx.destination);
+
+            // 引擎：双振荡器 + 低通，模拟往复机械声
+            engineFilter = ctx.createBiquadFilter();
+            engineFilter.type = 'lowpass';
+            engineFilter.frequency.value = 900;
+            engineGain = ctx.createGain();
+            engineGain.gain.value = 0;
+            engineOscA = ctx.createOscillator(); engineOscA.type = 'sawtooth'; engineOscA.frequency.value = 60;
+            engineOscB = ctx.createOscillator(); engineOscB.type = 'square'; engineOscB.frequency.value = 30;
+            const oscBGain = ctx.createGain(); oscBGain.gain.value = 0.35;
+            engineOscA.connect(engineFilter);
+            engineOscB.connect(oscBGain); oscBGain.connect(engineFilter);
+            engineFilter.connect(engineGain); engineGain.connect(master);
+            engineOscA.start(); engineOscB.start();
+
+            // 白噪声缓冲：复用给胎鸣与氮气
+            noiseBuffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 2), ctx.sampleRate);
+            const data = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1;
+
+            const screechSrc = ctx.createBufferSource();
+            screechSrc.buffer = noiseBuffer; screechSrc.loop = true;
+            const screechFilter = ctx.createBiquadFilter();
+            screechFilter.type = 'bandpass'; screechFilter.frequency.value = 2400; screechFilter.Q.value = 3;
+            screechGain = ctx.createGain(); screechGain.gain.value = 0;
+            screechSrc.connect(screechFilter); screechFilter.connect(screechGain); screechGain.connect(master);
+            screechSrc.start();
+
+            const nitroSrc = ctx.createBufferSource();
+            nitroSrc.buffer = noiseBuffer; nitroSrc.loop = true;
+            const nitroFilter = ctx.createBiquadFilter();
+            nitroFilter.type = 'highpass'; nitroFilter.frequency.value = 3000;
+            nitroGain = ctx.createGain(); nitroGain.gain.value = 0;
+            nitroSrc.connect(nitroFilter); nitroFilter.connect(nitroGain); nitroGain.connect(master);
+            nitroSrc.start();
+
+            ready = true;
+            if (ctx.state === 'suspended') ctx.resume();
+          } catch (err) {
+            ready = false;
+          }
+        }
+
+        function updateEngine(rpm01, load, drifting, nitroOn) {
+          if (!ready) return;
+          const freq = 45 + rpm01 * 185;
+          engineOscA.frequency.value = freq;
+          engineOscB.frequency.value = freq * 0.5;
+          engineFilter.frequency.value = 500 + rpm01 * 1600;
+          engineGain.gain.value = 0.05 + load * 0.07;
+          screechGain.gain.value = drifting ? 0.12 : 0;
+          nitroGain.gain.value = nitroOn ? 0.09 : 0;
+        }
+
+        function silence() {
+          if (!ready) return;
+          engineGain.gain.value = 0;
+          screechGain.gain.value = 0;
+          nitroGain.gain.value = 0;
+        }
+
+        function crash() {
+          if (!ready) return;
+          const src = ctx.createBufferSource();
+          src.buffer = noiseBuffer;
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'lowpass';
+          filter.frequency.setValueAtTime(1800, ctx.currentTime);
+          filter.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.35);
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(0.5, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+          src.connect(filter); filter.connect(gain); gain.connect(master);
+          src.start(); src.stop(ctx.currentTime + 0.45);
+        }
+
+        function blip() {
+          if (!ready) return;
+          const osc = ctx.createOscillator();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(880, ctx.currentTime);
+          osc.frequency.linearRampToValueAtTime(1420, ctx.currentTime + 0.09);
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(0.14, ctx.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.16);
+          osc.connect(gain); gain.connect(master);
+          osc.start(); osc.stop(ctx.currentTime + 0.18);
+        }
+
+        /* 擦身而过的"呼啸声"：一段快速下滑的带通噪声 + 高频提示音，
+         * 与 blip 的普通闪避音区分开，强化"贴得越近奖励越高"的正反馈。 */
+        function nearMiss() {
+          if (!ready) return;
+          const now = ctx.currentTime;
+          const src = ctx.createBufferSource();
+          src.buffer = noiseBuffer;
+          const filter = ctx.createBiquadFilter();
+          filter.type = 'bandpass';
+          filter.Q.value = 6;
+          filter.frequency.setValueAtTime(3200, now);
+          filter.frequency.exponentialRampToValueAtTime(700, now + 0.28);
+          const gain = ctx.createGain();
+          gain.gain.setValueAtTime(0.0001, now);
+          gain.gain.exponentialRampToValueAtTime(0.28, now + 0.03);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+          src.connect(filter); filter.connect(gain); gain.connect(master);
+          src.start(); src.stop(now + 0.32);
+
+          const osc = ctx.createOscillator();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(1200, now);
+          osc.frequency.linearRampToValueAtTime(2000, now + 0.12);
+          const og = ctx.createGain();
+          og.gain.setValueAtTime(0.12, now);
+          og.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
+          osc.connect(og); og.connect(master);
+          osc.start(); osc.stop(now + 0.22);
+        }
+
+        function toggleMute() {
+          muted = !muted;
+          if (ready) master.gain.value = muted ? 0 : 0.5;
+          const btn = dom['audio-toggle-btn'];
+          if (btn) {
+            btn.innerText = muted ? '🔇 静音' : '🔊 音效';
+            btn.setAttribute('aria-pressed', String(muted));
+          }
+        }
+
+        return { init, updateEngine, silence, crash, blip, nearMiss, toggleMute };
+      })();
+
+      /* ---------------------- 12. 赛事状态控制 ---------------------- */
+      function resetCarKinematics(car, heading, position) {
+        car.pos.copy(position);
+        car.prevPos.copy(position);
+        car.velocity.set(0, 0, 0);
+        car.speed = 0;
+        car.vLong = 0;
+        car.vLat = 0;
+        car.lateralSlip = 0;
+        car.heading = heading;
+        car.steerAngle = 0;
+        car.visualSteer = 0;
+        car.suspensionPitch = 0;
+        car.suspensionRoll = 0;
+        car.gForce = 0;
+        car.isDrifting = false;
+        car.isNitroActive = false;
+        car.nitroAmount = 100;
+        car.surfaceType = 'tarmac';
+        car.lastWheelL.set(0, 0, 0);
+        car.lastWheelR.set(0, 0, 0);
+        car.mesh.position.copy(position);
+        car.mesh.rotation.set(0, heading, 0);
+        car.wheels.forEach(w => {
+          w.rotation.y = 0;
+          w.position.y = w.userData.baseY;
+          w.children[0].rotation.x = 0;
+        });
+        car.nitroFlame.material.opacity = 0;
+        if (car.nitroGroup) car.nitroGroup.scale.z = 0.001;
+      }
+
+      /** 清空胎印缓冲区（旧版跨局残留，重开后赛道上还留着上一局的黑色轨迹） */
+      function clearSkidmarks() {
+        if (!skidmarkLine) return;
+        const attr = skidmarkLine.geometry.attributes.position;
+        attr.array.fill(0);
+        attr.needsUpdate = true;
+        skidIndex = 0;
+      }
+
+      function resetRaceData() {
+        durability = 100;
+        totalScore = 0;
+        scoreAccumulator = 0;
+        totalDistanceMeters = 0;
+        totalEvadedCount = 0;
+        comboCount = 0;
+        comboTimer = 0;
+        lapCount = 1;
+        hudCache.durability = -1;
+        hudCache.combo = -1;
+        updateScoreHud();
+      }
+
+      /** 依据剩余倒计时刷新龙门架指示灯：逐盏转红，归零时全绿 */
+      function updateStartLights() {
+        if (startLightBulbs.length === 0) return;
+        if (countdownTime <= 0) {
+          for (let i = 0; i < startLightBulbs.length; i++) {
+            startLightBulbs[i].material.color.setHex(START_LIGHT.green);
+          }
+          return;
+        }
+        const elapsed = COUNTDOWN_STEPS * COUNTDOWN_STEP_SEC - countdownTime;
+        const litCount = Math.min(COUNTDOWN_STEPS, Math.floor(elapsed / COUNTDOWN_STEP_SEC) + 1);
+        for (let i = 0; i < startLightBulbs.length; i++) {
+          startLightBulbs[i].material.color.setHex(
+            i < litCount ? START_LIGHT.red : START_LIGHT.off,
+          );
+        }
+      }
+
+      function startRace() {
+        AudioFX.init();
+        requestLandscapeLock();
+
+        // 清除任何残留暂停态，确保发车即进入比赛
+        if (isPaused) {
+          isPaused = false;
+          if (dom['pause-overlay']) dom['pause-overlay'].classList.remove('show');
+        }
+
+        dom['start-screen'].classList.add('hidden');
+        dom['hud'].classList.add('active');
+
+        const pStart = trackCurve.getPointAt(0);
+        const tangent = trackCurve.getTangentAt(0);
+        const startAngle = Math.atan2(-tangent.x, -tangent.z);
+
+        if (!playerCar) playerCar = createSuperCar(VEHICLES[selectedVehicleType]);
+        playerCar.spec = VEHICLES[selectedVehicleType];
+        playerCar.paintMat.color.setHex(VEHICLES[selectedVehicleType].color);
+
+        // 起点定位：初始化 LUT 索引，避免首帧邻域搜索收敛延迟
+        playerCar.lutIndex = 0;
+        playerCar.prevLutIndex = 0;
+        resetCarKinematics(playerCar, startAngle, pStart);
+
+        // 先复位赛事数据（含 lapCount），再据此密度布点；顺序颠倒会沿用上一局圈数
+        resetRaceData();
+        populateTrackObstacles();
+        clearSkidmarks();
+        resetAllInputs();
+
+        // 进入发车倒计时：动力锁死，逐盏亮红灯，全绿后放行
+        countdownTime = COUNTDOWN_STEPS * COUNTDOWN_STEP_SEC;
+        updateStartLights();
+
+        isRacing = true;
+        lastFrameTime = performance.now();
+      }
+
+      function triggerGameOver() {
+        if (!isRacing) return;
+        isRacing = false;
+        countdownTime = 0;
+        AudioFX.silence();
+        dom['hud'].classList.remove('active');
+
+        const isRecord = totalScore > bestScore;
+        if (isRecord) {
+          bestScore = totalScore;
+          saveBestScore(bestScore);
+        }
+
+        dom['finish-stats'].innerHTML =
+          '突围总得分: <b style="color:#00f0ff;font-size:20px;">' + totalScore + ' 分</b><br>' +
+          '极限行车里程: <b>' + Math.round(totalDistanceMeters) + ' 米</b><br>' +
+          '成功闪避障碍: <b style="color:#00ff88">' + totalEvadedCount + ' 处</b><br>' +
+          '完成圈数: <b>' + lapCount + ' 圈</b><br>' +
+          (isRecord
+            ? '<b style="color:#ffaa00">🏆 刷新历史最高分！</b>'
+            : '历史最高: <b>' + bestScore + ' 分</b>');
+        dom['game-over-modal'].classList.remove('hidden');
+      }
+
+      function returnToLobby() {
+        dom['game-over-modal'].classList.add('hidden');
+        dom['start-screen'].classList.remove('hidden');
+        AudioFX.silence();
+
+        // 解除残留暂停态，避免遮罩卡在渲染循环外导致大厅黑屏
+        isPaused = false;
+        if (dom['pause-overlay']) dom['pause-overlay'].classList.remove('show');
+
+        // 彻底复位：清除残余物理量、车身姿态、车轮转角与赛道残骸
+        if (playerCar) {
+          resetCarKinematics(playerCar, 0, S.v6.set(0, 0, 0));
+          playerCar.lutIndex = 0;
+          playerCar.prevLutIndex = 0;
+        }
+        for (let i = 0; i < activeObstacles.length; i++) activeObstacles[i].visible = false;
+        activeObstacles = [];
+        clearSkidmarks();
+        resetRaceData();
+        resetAllInputs();
+        updateRadar(null);
+      }
+
+      /* ---------------------- 最高分持久化 ---------------------- */
+      const BEST_SCORE_KEY = 'apexDrift3d.bestScore';
+
+      /** localStorage 在隐私模式/沙箱下会抛异常，必须静默降级为内存记录 */
+      function loadBestScore() {
+        try {
+          const raw = window.localStorage.getItem(BEST_SCORE_KEY);
+          const val = raw === null ? 0 : parseInt(raw, 10);
+          bestScore = Number.isFinite(val) && val > 0 ? val : 0;
+        } catch (err) {
+          bestScore = 0;
+        }
+      }
+
+      function saveBestScore(value) {
+        try {
+          window.localStorage.setItem(BEST_SCORE_KEY, String(value));
+        } catch (err) {
+          // 存储不可用时仅保留本会话内存记录，不影响游戏进行
+        }
+      }
+
+      /** 把历史最高分同步到大厅与 HUD（两者共用同一份数据源） */
+      function updateBestScoreDisplay() {
+        const lobby = dom['lobby-best'];
+        if (lobby) {
+          lobby.innerText = bestScore > 0 ? '历史最高分: ' + bestScore + ' 分' : '尚无记录 · 去创造第一个成绩';
+        }
+        hudCache.best = -1; // 强制 HUD 下次刷新
+      }
+
+      /* ---------------------- 13. 主循环 ---------------------- */
+      let lastFrameTime = 0;
+
+      /** 暂停/恢复切换（Esc 或 P）；仅在比赛进行中可用 */
+      function togglePause() {
+        if (!isRacing) return;
+        isPaused = !isPaused;
+        const el = dom['pause-overlay'];
+        if (el) el.classList.toggle('show', isPaused);
+        if (isPaused) {
+          AudioFX.silence();
+          resetAllInputs();
+        } else {
+          lastFrameTime = performance.now();
+        }
+      }
+
+      function gameLoop(now) {
+        requestAnimationFrame(gameLoop);
+        if (isPaused) return;
+
+        const delta = Math.min((now - lastFrameTime) / 1000, 0.1);
+        lastFrameTime = now;
+
+        if (isRacing && playerCar) {
+          // 发车倒计时：期间冻结输入与动力，仅让镜头与灯光运转
+          if (countdownTime > 0) {
+            countdownTime = Math.max(0, countdownTime - delta);
+            updateStartLights();
+            if (countdownTime === 0) AudioFX.blip();
+            pollControllerInputs();
+            inputs.throttle = 0;
+            inputs.nitro = false;
+            updateCarPhysics(playerCar, delta);
+            updateObstacleKnockdown(delta);
+            updateCamera(delta);
+            updateParticles(delta);
+            updateDashboardHud(playerCar);
+            updateScoreHud();
+            updateRadar(playerCar);
+            AudioFX.updateEngine(0.18, 0, false, false);
+            renderer.render(scene, camera);
+            return;
+          }
+
+          pollControllerInputs();
+          updateCarPhysics(playerCar, delta);
+          if (!isRacing) { renderer.render(scene, camera); return; } // 本帧已报废
+          updateObstacleKnockdown(delta);
+          updateCamera(delta);
+          updateParticles(delta);
+          updateRadar(playerCar);
+          updateDashboardHud(playerCar);
+          updateScoreHud();
+
+          // 引擎声浪：按挡位区间换算转速
+          const speedKmh = Math.abs(playerCar.speed * 3.6);
+          const gearBand = Math.min(5, Math.floor(speedKmh / 55));
+          const within = (speedKmh - gearBand * 55) / 55;
+          const rpm01 = playerCar.speed === 0 ? 0 : Math.min(1, 0.25 + within * 0.75);
+          AudioFX.updateEngine(rpm01, inputs.throttle, playerCar.isDrifting, playerCar.isNitroActive);
+        } else if (playerCar) {
+          // 大厅展台：车辆自转展示
+          playerCar.mesh.rotation.y += 0.008;
+          camera.position.set(0, 3.5, 9);
+          camera.lookAt(0, 0.8, 0);
+        }
+
+        renderer.render(scene, camera);
+      }
+
+      /* 微信内置浏览器检测：竖屏遮罩中给出专属外跳指引 */
+      function detectWeChat() {
+        try {
+          if (/MicroMessenger/i.test(navigator.userAgent)) {
+            const tip = document.getElementById('wechat-tip');
+            if (tip) tip.classList.add('show');
+          }
+        } catch (err) { /* 静默失败不影响启动 */ }
+      }
+
+      /* ---------------------- 启动 ---------------------- */
+      function boot() {
+        cacheDom();
+        detectWeChat();
+        loadBestScore();
+        initSceneEnvironment();
+        playerCar = createSuperCar(VEHICLES[selectedVehicleType]);
+        initObstacleRadar();
+        initEvents();
+        syncTouchSteer();
+        updateBestScoreDisplay();
+        lastFrameTime = performance.now();
+        requestAnimationFrame(gameLoop);
+      }
+
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+      } else {
+        boot();
+      }
+    })();
+  </script>
+</body>
+</html>
