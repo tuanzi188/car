@@ -1632,6 +1632,84 @@
       }
 
       /**
+       * 激活单个障碍到赛道指定参数位置（贪心布点与动态危险事件共用）
+       */
+      function placeObstacle(obs, t, laneOffset) {
+        const pt = trackCurve.getPointAt(t);
+        const tangent = trackCurve.getTangentAt(t).normalize();
+        const binormal = S.v1.crossVectors(tangent, S.axisY).normalize();
+        obs.position.copy(pt).addScaledVector(binormal, laneOffset);
+        obs.quaternion.setFromUnitVectors(S.axisZneg, tangent);
+        obs.rotation.x = 0;
+        obs.userData.t = t;
+        obs.userData.lat = laneOffset;
+        obs.userData.hit = false;
+        obs.userData.evaded = false;
+        obs.userData.nearMissed = false;
+        obs.userData.knocked = false;
+        obs.userData.knockT = 0;
+        obs.visible = true;
+        activeObstacles.push(obs);
+      }
+
+      /** 在 [startIdx, guardEnd] 内随机找一段连续采样点半径均 ≥ minRadius 的直道/缓弯 */
+      function findEventStart(n, startIdx, guardEnd, minRadius, lengthSamples) {
+        for (let attempt = 0; attempt < 40; attempt++) {
+          const s = startIdx + Math.floor(Math.random() * Math.max(1, guardEnd - startIdx - lengthSamples));
+          let ok = true;
+          const probes = Math.max(1, Math.floor(lengthSamples / 4));
+          for (let j = 0; j <= lengthSamples; j += probes) {
+            if (trackLut.radius[Math.min(n - 1, s + j)] < minRadius) { ok = false; break; }
+          }
+          if (ok) return s;
+        }
+        return -1;
+      }
+
+      /**
+       * 动态危险事件（第 2 圈起随机插入，逐圈强化）：
+       * - 障碍走廊：中高速直道蛇形密集排列，间距压至正常一半，强制减速走线
+       * - 窄道夹击：直道双侧对排，横向只留 ~4.5m 单车道窗口，考验精准切缝
+       * 事件段整体跳过正常布点避免重叠；池余量不足时放弃触发。
+       */
+      function planDangerEvent(spec, n, targetCount, startIdx, guardEnd) {
+        if (lapCount < 2) return null;
+        if (Math.random() > 0.65) return null;
+        const spacing = trackLut.spacing;
+        const reactionSec = isMobileDevice ? 1.05 : 0.95;
+        const roll = Math.random();
+
+        if (roll < 0.55) {
+          // 障碍走廊：横向交替蛇形，间距压到正常布点的 ~55%
+          const count = Math.min(7, 4 + lapCount);
+          if (targetCount - count < 2) return null;
+          const vPass = Math.max(12, corneringSpeed(spec, 70));
+          const stepSamples = Math.max(5, Math.ceil((vPass * 0.55 * reactionSec) / spacing));
+          const lengthSamples = count * stepSamples;
+          const s = findEventStart(n, startIdx, guardEnd, 50, lengthSamples);
+          if (s < 0) return null;
+          const lanes = [];
+          for (let i = 0; i < count; i++) {
+            lanes.push((i % 2 === 0 ? 1 : -1) * (3.5 + Math.random() * 1.5));
+          }
+          return { t: s / n, stepT: stepSamples / n, lanes: lanes, endIdx: s + lengthSamples + 2 };
+        }
+
+        // 窄道夹击：仅直道（可全速通过、考验精准度），左右对排留单车道窗口
+        const groups = Math.min(4, 2 + Math.ceil(lapCount / 2));
+        const need = groups * 2;
+        if (targetCount - need < 2) return null;
+        const vPass = Math.max(16, corneringSpeed(spec, 90));
+        const stepSamples = Math.max(6, Math.ceil((vPass * 0.7 * reactionSec) / spacing));
+        const lengthSamples = groups * stepSamples;
+        const s = findEventStart(n, startIdx, guardEnd, 85, lengthSamples);
+        if (s < 0) return null;
+        const lanes = [];
+        for (let i = 0; i < groups; i++) { lanes.push(-6.5, -1.0); }
+        return { t: s / n, stepT: stepSamples / n, lanes: lanes, endIdx: s + lengthSamples + 2 };
+      }
+
+      /**
        * 按弯道可通过车速贪心布点：保证任意相邻障碍的弧长间隔
        * 不短于"该处车速 × 反应时间"，使高速段不会退化成不可反应的反应力测试。
        * 圈数递增时提高密度，形成难度曲线。
@@ -1655,32 +1733,27 @@
         const guardEnd = Math.floor(n * 0.97);
         let placed = 0;
 
+        // 动态危险事件：第 2 圈起随机插入，事件段整体跳过正常布点避免重叠
+        const evt = planDangerEvent(spec, n, targetCount, Math.floor(n * 0.06), guardEnd);
+        if (evt) {
+          for (let e = 0; e < evt.lanes.length; e++) {
+            if (placed >= targetCount) break;
+            placeObstacle(obstaclePool[placed], evt.t + e * evt.stepT, evt.lanes[e]);
+            placed++;
+          }
+          idx = evt.endIdx;
+        }
+
         while (placed < targetCount && idx < guardEnd) {
           const r = trackLut.radius[idx];
           // 该采样点的可通过车速（下限 12 m/s，避免发夹弯处算出过小间距）
           const vPass = Math.max(12, corneringSpeed(spec, r));
           const needMeters = vPass * reactionSec + 8;
           const needSamples = Math.max(8, Math.ceil(needMeters / trackLut.spacing));
-
-          const t = idx / n;
-          const pt = trackCurve.getPointAt(t);
-          const tangent = trackCurve.getTangentAt(t).normalize();
-          const binormal = S.v1.crossVectors(tangent, S.axisY).normalize();
           const laneOffset = (Math.random() - 0.5) * laneRange;
 
           const obs = obstaclePool[placed];
-          obs.position.copy(pt).addScaledVector(binormal, laneOffset);
-          obs.quaternion.setFromUnitVectors(S.axisZneg, tangent);
-          obs.rotation.x = 0;
-          obs.userData.t = t;
-          obs.userData.lat = laneOffset;
-          obs.userData.hit = false;
-          obs.userData.evaded = false;
-          obs.userData.nearMissed = false;
-          obs.userData.knocked = false;
-          obs.userData.knockT = 0;
-          obs.visible = true;
-          activeObstacles.push(obs);
+          placeObstacle(obs, idx / n, laneOffset);
 
           placed++;
           idx += needSamples;
@@ -2213,9 +2286,9 @@
           spoke3.rotation.y = Math.PI / 2;
 
           // 打孔通风刹车盘 (Brake Rotor)
-           const rotor = new THREE.Mesh(rotorGeo, brakeRotorMat);
-           rotor.rotation.z = Math.PI / 2;
-           rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
+          const rotor = new THREE.Mesh(rotorGeo, brakeRotorMat);
+          rotor.rotation.z = Math.PI / 2;
+          rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
 
           // 轮毂中心帽：填补辐条中心空洞，避免远景轮子出现穿透感
           const hubCap = new THREE.Mesh(hubCapGeo, chromeMat);
@@ -2293,6 +2366,7 @@
           mergeStatic(carGroup, carbonMat);   // 前铲/风刀/侧裙/脊鳍/后视镜/扩散器/尾翼等 14 件
           mergeStatic(carGroup, darkTrimMat); // 侧进气 + 扩散器导流叶
           mergeStatic(carGroup, chromeMat);   // 四出排气管
+          mergeStatic(carGroup, archMat);     // 四个轮拱饰圈合并为一个静态网格
           // 轮内合并：轮圈 + 三辐条合成一体随轮滚动（每轮 7 → 4，共省 12 draw call）
           // 注意：轮圈/轮辐已移入 spinner 子组，合并目标必须是 spinner 本身
           wheels.forEach(wg => mergeStatic(wg.userData.spinner, rimOuterMat));
