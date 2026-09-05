@@ -2,7 +2,7 @@
   "name": "巅峰极速 3D - 极限突围闪避",
   "short_name": "巅峰极速",
   "description": "3D 物理赛车 · 极限闪避突围",
-  "start_url": "space_shooter.html",
+  "start_url": "./",
   "scope": ".",
   "display": "fullscreen",
   "orientation": "landscape",
