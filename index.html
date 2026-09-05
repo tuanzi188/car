@@ -1386,6 +1386,9 @@
         }
         kerbRed.receiveShadow = true;
         kerbWhite.receiveShadow = true;
+        // 实例化网格包围球须按全部实例矩阵重算，否则离开赛道原点即被视锥整条剔除
+        kerbRed.computeBoundingSphere();
+        kerbWhite.computeBoundingSphere();
         scene.add(kerbRed, kerbWhite);
 
         // 观众看台：起点大直道外侧，观众席用一张程序化纹理模拟全场
@@ -1415,6 +1418,7 @@
         standMesh.position.copy(standA).addScaledVector(standSide, standOffset);
         standMesh.position.y = 3.6;
         standMesh.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), standDir);
+        standMesh.frustumCulled = false;
         scene.add(standMesh);
 
         const crowdPlane = new THREE.Mesh(
@@ -1426,6 +1430,7 @@
         crowdPlane.lookAt(
           new THREE.Vector3().copy(standA).addScaledVector(standSide, standOffset - 12).setY(3.6)
         );
+        crowdPlane.frustumCulled = false;
         scene.add(crowdPlane);
 
         // 赛道外侧广告牌（程序化文字纹理）
@@ -1450,6 +1455,7 @@
           b.position.copy(pt).addScaledVector(bin, side * (standOffset - 2));
           b.position.y = 3.2;
           b.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), tan);
+          b.frustumCulled = false;
           scene.add(b);
         });
       }
@@ -1602,6 +1608,7 @@
           }
 
           obsGroup.visible = false;
+          obsGroup.frustumCulled = false; // 少量重要障碍，禁止视锥剔除以免偶发消失
           obsGroup.userData = {
             kind: kind,
             t: 0,
@@ -1931,6 +1938,86 @@
         cabin.castShadow = true;
         carGroup.add(cabin);
 
+        // 风挡分层：用独立前后玻璃面强化座舱的纵深与反光边界
+        const windshieldMat = new THREE.MeshPhysicalMaterial({
+          color: 0x13293d,
+          metalness: 0.18,
+          roughness: 0.04,
+          transparent: true,
+          opacity: 0.74,
+          transmission: 0.52,
+          ior: 1.48,
+        });
+        const windshieldGeo = new THREE.BoxGeometry(1.18, 0.06, 0.82);
+        const windshield = new THREE.Mesh(windshieldGeo, windshieldMat);
+        windshield.position.set(0, 1.04, -0.72);
+        windshield.rotation.x = -0.28;
+        windshield.castShadow = true;
+        const rearGlass = new THREE.Mesh(new THREE.BoxGeometry(1.14, 0.05, 0.54), windshieldMat);
+        rearGlass.position.set(0, 1.04, 0.54);
+        rearGlass.rotation.x = 0.26;
+
+        // 左右侧窗与 A 柱饰条，让车顶不再像单一的圆柱体
+        const sideWindowGeo = new THREE.BoxGeometry(0.055, 0.26, 0.92);
+        const sideWindowL = new THREE.Mesh(sideWindowGeo, windshieldMat);
+        sideWindowL.position.set(-0.73, 1.01, -0.08);
+        sideWindowL.rotation.z = -0.08;
+        const sideWindowR = sideWindowL.clone();
+        sideWindowR.position.x = 0.73;
+        sideWindowR.rotation.z = 0.08;
+        const pillarGeo = new THREE.BoxGeometry(0.075, 0.34, 0.12);
+        const pillarL = new THREE.Mesh(pillarGeo, carbonMat);
+        pillarL.position.set(-0.57, 1.10, -0.64);
+        pillarL.rotation.x = -0.28;
+        const pillarR = pillarL.clone();
+        pillarR.position.x = 0.57;
+        carGroup.add(windshield, rearGlass, sideWindowL, sideWindowR, pillarL, pillarR);
+
+        // 车身肩线与底部侧刃：增加侧面高光断面，改善俯视和追随视角剪影
+        const shoulderGeo = new THREE.BoxGeometry(0.16, 0.22, 2.75);
+        const shoulderL = new THREE.Mesh(shoulderGeo, paintMat);
+        shoulderL.position.set(-1.01, 0.64, 0.10);
+        shoulderL.rotation.z = -0.08;
+        const shoulderR = shoulderL.clone();
+        shoulderR.position.x = 1.01;
+        shoulderR.rotation.z = 0.08;
+        const undertray = new THREE.Mesh(new THREE.BoxGeometry(1.86, 0.10, 2.92), carbonMat);
+        undertray.position.set(0, 0.23, 0.08);
+        carGroup.add(shoulderL, shoulderR, undertray);
+
+        // 前唇中央格栅与横向散热条，避免车头只剩一块平面
+        const grilleMat = new THREE.MeshStandardMaterial({
+          color: 0x05070b,
+          metalness: 0.72,
+          roughness: 0.32,
+        });
+        const grille = new THREE.Mesh(new THREE.BoxGeometry(1.26, 0.18, 0.08), grilleMat);
+        grille.position.set(0, 0.38, -2.27);
+        const grilleBarGeo = new THREE.BoxGeometry(1.12, 0.025, 0.025);
+        const grilleBarTop = new THREE.Mesh(grilleBarGeo, chromeMat);
+        grilleBarTop.position.set(0, 0.44, -2.32);
+        const grilleBarBottom = grilleBarTop.clone();
+        grilleBarBottom.position.y = 0.36;
+        carGroup.add(grille, grilleBarTop, grilleBarBottom);
+
+        // 四个轮拱饰圈：与轮胎边缘形成连续轮廓，提升悬挂高度感
+        const archMat = new THREE.MeshStandardMaterial({
+          color: 0x202631,
+          metalness: 0.72,
+          roughness: 0.26,
+        });
+        const archGeo = new THREE.TorusGeometry(WHEEL_RADIUS * 1.04, 0.055, 8, 24);
+        const archPositions = [
+          [-1.08, 0.39, -1.45], [1.08, 0.39, -1.45],
+          [-1.10, 0.41, 1.45], [1.10, 0.41, 1.45],
+        ];
+        archPositions.forEach(archPos => {
+          const arch = new THREE.Mesh(archGeo, archMat);
+          arch.rotation.y = Math.PI / 2;
+          arch.position.set(archPos[0], archPos[1], archPos[2]);
+          carGroup.add(arch);
+        });
+
         // 车顶中央碳纤维脊鳍 (Roof Air Scoop / Spine)
         const roofSpine = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.14, 1.8), carbonMat);
         roofSpine.position.set(0, 1.20, 0.15);
@@ -2092,6 +2179,7 @@
         const spokeGeo = new THREE.BoxGeometry(0.06, 0.50, 0.395);
         const rotorGeo = new THREE.CylinderGeometry(0.22, 0.22, 0.04, 16);
         const caliperGeo = new THREE.BoxGeometry(0.12, 0.22, 0.14);
+        const hubCapGeo = new THREE.CylinderGeometry(0.085, 0.085, 0.42, 12);
 
         const wheels = [];
         const wheelOffsets = [
@@ -2125,11 +2213,15 @@
           spoke3.rotation.y = Math.PI / 2;
 
           // 打孔通风刹车盘 (Brake Rotor)
-          const rotor = new THREE.Mesh(rotorGeo, brakeRotorMat);
-          rotor.rotation.z = Math.PI / 2;
-          rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
+           const rotor = new THREE.Mesh(rotorGeo, brakeRotorMat);
+           rotor.rotation.z = Math.PI / 2;
+           rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
 
-          spinner.add(rimMesh, spoke1, spoke2, spoke3, rotor);
+          // 轮毂中心帽：填补辐条中心空洞，避免远景轮子出现穿透感
+          const hubCap = new THREE.Mesh(hubCapGeo, chromeMat);
+          hubCap.rotation.z = Math.PI / 2;
+
+          spinner.add(rimMesh, spoke1, spoke2, spoke3, rotor, hubCap);
 
           // 竞技六活塞卡钳 (Brembo Red Caliper，不随轮旋转)
           const caliper = new THREE.Mesh(caliperGeo, caliperMat);
