@@ -2109,6 +2109,9 @@
           tireMesh.rotation.z = Math.PI / 2;
           tireMesh.castShadow = true;
 
+          // 随轮滚动的旋转子组：轮毂外圈 + 辐条 + 刹车盘（卡钳独立静止于轮组）
+          const spinner = new THREE.Group();
+
           // 轮毂外圈
           const rimMesh = new THREE.Mesh(rimOuterGeo, rimOuterMat);
           rimMesh.rotation.z = Math.PI / 2;
@@ -2126,13 +2129,15 @@
           rotor.rotation.z = Math.PI / 2;
           rotor.position.x = pos.x > 0 ? -0.14 : 0.14;
 
-          // 竞技六活塞卡钳 (Brembo Red Caliper)
+          spinner.add(rimMesh, spoke1, spoke2, spoke3, rotor);
+
+          // 竞技六活塞卡钳 (Brembo Red Caliper，不随轮旋转)
           const caliper = new THREE.Mesh(caliperGeo, caliperMat);
           caliper.position.set(pos.x > 0 ? -0.15 : 0.15, 0.14, 0);
 
-          wGroup.add(tireMesh, rimMesh, spoke1, spoke2, spoke3, rotor, caliper);
+          wGroup.add(tireMesh, spinner, caliper);
           wGroup.position.set(pos.x, pos.y, pos.z);
-          wGroup.userData = { baseY: pos.y };
+          wGroup.userData = { baseY: pos.y, spinner: spinner };
           carGroup.add(wGroup);
           wheels.push(wGroup);
         });
@@ -2572,7 +2577,10 @@
         car.wheels[3].position.y = car.wheels[3].userData.baseY + car.suspensionPitch * 0.5;
 
         const wheelRoll = (car.vLong / WHEEL_RADIUS) * delta;
-        for (let i = 0; i < 4; i++) car.wheels[i].children[0].rotation.x += wheelRoll;
+        for (let i = 0; i < 4; i++) {
+          car.wheels[i].children[0].rotation.x += wheelRoll; // 轮胎
+          if (car.wheels[i].userData.spinner) car.wheels[i].userData.spinner.rotation.x += wheelRoll; // 轮圈/辐条/刹车盘
+        }
 
         // 16. 漂移胎印（需后轮世界坐标，仅在漂移时计算）
         if (car.isDrifting) {
