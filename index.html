@@ -1348,15 +1348,38 @@
 
         // 2. 共享几何体
         const baseGeo = new THREE.BoxGeometry(2.5, 0.22, 1.05);
-        const mainBodyGeo = new THREE.BoxGeometry(2.32, 0.85, 0.72);
-        const topLipGeo = new THREE.BoxGeometry(2.36, 0.12, 0.76);
-        const stripeGeo = new THREE.BoxGeometry(0.32, 0.78, 0.74);
+        /* 水马主体：横截面为梯形圆肩（下宽上窄），沿长度方向挤出并倒圆角，
+         * 替代旧版纯方盒，受光面出现连续的弧面高光带。
+         */
+        const barrierShape = new THREE.Shape();
+        barrierShape.moveTo(-0.36, 0.00);
+        barrierShape.lineTo(0.36, 0.00);
+        barrierShape.lineTo(0.31, 0.52);
+        barrierShape.quadraticCurveTo(0.28, 0.82, 0.16, 0.85);
+        barrierShape.lineTo(-0.16, 0.85);
+        barrierShape.quadraticCurveTo(-0.28, 0.82, -0.31, 0.52);
+        const mainBodyGeo = new THREE.ExtrudeGeometry(barrierShape, {
+          depth: 2.32, bevelEnabled: true, bevelThickness: 0.05,
+          bevelSize: 0.05, bevelSegments: 2, curveSegments: 5,
+        });
+        mainBodyGeo.rotateY(Math.PI / 2);   // 挤出轴对齐水马长度方向（X）
+        mainBodyGeo.translate(0, 0.155, 0); // 底面落在橡胶底座之上
+        const topLipGeo = new THREE.BoxGeometry(2.36, 0.12, 0.52);
+        const stripeGeo = new THREE.BoxGeometry(0.32, 0.44, 0.56);
         const postGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.45, 8);
         const lampBulbGeo = new THREE.SphereGeometry(0.18, 10, 8);
         const lampHaloGeo = new THREE.SphereGeometry(0.28, 8, 6);
-        const drumGeo = new THREE.CylinderGeometry(0.62, 0.62, 1.05, 14);
-        const drumLidGeo = new THREE.CylinderGeometry(0.66, 0.66, 0.09, 14);
-        const drumBandGeo = new THREE.CylinderGeometry(0.655, 0.655, 0.13, 14);
+        /* 油桶桶身：以车削（Lathe）生成带两道环形箍筋的鼓形轮廓，
+         * 替代旧版"直筒+贴片桶箍"，剪影更接近真实防撞油桶。
+         */
+        const drumProfile = [
+          [0.02, 0.00], [0.56, 0.00], [0.62, 0.06], [0.62, 0.30],
+          [0.55, 0.37], [0.62, 0.44], [0.62, 0.66], [0.55, 0.73],
+          [0.62, 0.80], [0.62, 1.00], [0.54, 1.05], [0.02, 1.05],
+        ].map(p => new THREE.Vector2(p[0], p[1]));
+        const drumGeo = new THREE.LatheGeometry(drumProfile, 18);
+        const drumLidGeo = new THREE.CylinderGeometry(0.60, 0.60, 0.06, 18);
+        const drumHoopGeo = new THREE.TorusGeometry(0.60, 0.045, 6, 18);
         const patchGeo = new THREE.CircleGeometry(1.35, 9);
         const crackGeo = new THREE.BoxGeometry(0.1, 0.05, 1.5);
 
@@ -1371,9 +1394,8 @@
             const baseMesh = new THREE.Mesh(baseGeo, blackBaseMat);
             baseMesh.position.y = 0.11;
             baseMesh.receiveShadow = true;
-            // 橙红色反光水马主体
+            // 橙红色反光水马主体（几何体已自带高度偏移）
             const bodyMesh = new THREE.Mesh(mainBodyGeo, barrierBodyMat);
-            bodyMesh.position.y = 0.58;
             bodyMesh.castShadow = true;
             // 上边缘包边加固槽
             const topLip = new THREE.Mesh(topLipGeo, barrierBodyMat);
@@ -1395,17 +1417,19 @@
             obsGroup.add(post, lampBulb, lampHalo);
 
           } else if (kind === 'drum') {
-            // 反光油桶：桶身 + 上下桶箍 + 顶盖
+            // 反光油桶：车削鼓形桶身 + 环形箍筋 + 顶盖
             const body = new THREE.Mesh(drumGeo, drumBodyMat);
-            body.position.y = 0.55;
+            body.position.y = 0.03;
             body.castShadow = true;
             const lid = new THREE.Mesh(drumLidGeo, drumBandMat);
-            lid.position.y = 1.10;
-            const bandLow = new THREE.Mesh(drumBandGeo, drumBandMat);
-            bandLow.position.y = 0.34;
-            const bandHigh = new THREE.Mesh(drumBandGeo, drumBandMat);
-            bandHigh.position.y = 0.78;
-            obsGroup.add(body, lid, bandLow, bandHigh);
+            lid.position.y = 1.09;
+            const hoopLow = new THREE.Mesh(drumHoopGeo, drumBandMat);
+            hoopLow.rotation.x = Math.PI / 2;
+            hoopLow.position.y = 0.40;
+            const hoopHigh = new THREE.Mesh(drumHoopGeo, drumBandMat);
+            hoopHigh.rotation.x = Math.PI / 2;
+            hoopHigh.position.y = 0.76;
+            obsGroup.add(body, lid, hoopLow, hoopHigh);
             // 斜贴反光条（提升夜间轮廓辨识）
             const stripe = new THREE.Mesh(stripeGeo, whiteStripeMat);
             stripe.scale.set(0.9, 0.62, 1.6);
@@ -1680,8 +1704,26 @@
         });
 
         // 2. 车身底盘与核心骨架 (Chassis & Core Shell)
-        // 主车身基座
-        const mainBody = new THREE.Mesh(new THREE.BoxGeometry(2.08, 0.42, 4.4), paintMat);
+        /* 主车身：以侧视轮廓挤出成楔形单体，替代旧版"方盒+斜面"拼接。
+         * 轮廓在 XZ 平面绘制（X=车宽方向占位、Y=纵向长度），沿车宽挤出并倒圆角，
+         * 得到低趴收腰、鼻锥渐起的整体式车壳。
+         */
+        const bodyShape = new THREE.Shape();
+        bodyShape.moveTo(-2.05, -0.22);   // 车尾底沿
+        bodyShape.lineTo(2.05, -0.24);    // 车头底沿（平直腹线）
+        bodyShape.lineTo(2.18, -0.10);    // 低鼻锥立面上收
+        bodyShape.lineTo(1.30, 0.02);     // 前舱盖缓升
+        bodyShape.lineTo(0.20, 0.10);     // 座舱前基线
+        bodyShape.lineTo(-1.10, 0.16);
+        bodyShape.lineTo(-1.90, 0.26);    // 后甲板（发动机罩）隆起
+        bodyShape.lineTo(-2.14, 0.22);    // 车尾立面
+        const bodyGeo = new THREE.ExtrudeGeometry(bodyShape, {
+          depth: 2.08, bevelEnabled: true, bevelThickness: 0.10,
+          bevelSize: 0.16, bevelSegments: 3, curveSegments: 5,
+        });
+        bodyGeo.rotateY(Math.PI / 2);     // 轮廓纵向轴转入世界 Z（车头朝 -Z）
+        bodyGeo.center();
+        const mainBody = new THREE.Mesh(bodyGeo, paintMat);
         mainBody.position.y = 0.48;
         mainBody.castShadow = true;
         mainBody.receiveShadow = true;
@@ -1692,7 +1734,7 @@
         hoodGeo.rotateY(Math.PI / 4);
         hoodGeo.scale(1.0, 0.24, 1.0);
         const hood = new THREE.Mesh(hoodGeo, paintMat);
-        hood.position.set(0, 0.62, -1.35);
+        hood.position.set(0, 0.74, -1.35);
         hood.rotation.x = 0.08;
         hood.castShadow = true;
         carGroup.add(hood);
@@ -1966,11 +2008,43 @@
       }
 
       /* ---------------------- 6. 场景初始化 ---------------------- */
+      /**
+       * 程序化天空（等距柱状投影）：渐变蓝天 + 太阳光晕 + 地面反照带。
+       * 同一张贴图既作 scene.background，也经 PMREM 卷积成环境贴图，
+       * 让超跑的 clearcoat 车漆与镀铬件获得真实的全景反射。
+       */
+      function createSkyTexture() {
+        const cvs = document.createElement('canvas');
+        cvs.width = 1024; cvs.height = 512;
+        const ctx = cvs.getContext('2d');
+        const grad = ctx.createLinearGradient(0, 0, 0, 512);
+        grad.addColorStop(0.00, '#3f7fbf');
+        grad.addColorStop(0.35, '#9cc6e8');
+        grad.addColorStop(0.48, '#eaf4fb');
+        grad.addColorStop(0.52, '#c9d4c2');
+        grad.addColorStop(1.00, '#5d6b58');
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, 1024, 512);
+        // 太阳光盘 + 径向光晕（方位与主平行光方向对应）
+        const sunX = 720, sunY = 118;
+        const halo = ctx.createRadialGradient(sunX, sunY, 6, sunX, sunY, 150);
+        halo.addColorStop(0, 'rgba(255,250,230,1)');
+        halo.addColorStop(0.25, 'rgba(255,236,190,0.55)');
+        halo.addColorStop(1, 'rgba(255,236,190,0)');
+        ctx.fillStyle = halo;
+        ctx.fillRect(sunX - 160, sunY - 160, 320, 320);
+        const tex = new THREE.CanvasTexture(cvs);
+        tex.mapping = THREE.EquirectangularReflectionMapping;
+        tex.colorSpace = THREE.SRGBColorSpace;
+        return tex;
+      }
+
       function initSceneEnvironment() {
         const container = document.getElementById('game-container');
         scene = new THREE.Scene();
-        scene.background = new THREE.Color(0x87ceeb);
-        scene.fog = new THREE.FogExp2(0xb8d4e8, 0.0010);
+        const skyTex = createSkyTexture();
+        scene.background = skyTex;
+        scene.fog = new THREE.FogExp2(0xcfe0ee, 0.0009);
 
         camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.2, 2000);
 
@@ -1987,9 +2061,15 @@
         renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         container.appendChild(renderer.domElement);
 
-        scene.add(new THREE.HemisphereLight(0x87ceeb, 0xc8d8a8, 1.0));
+        // PMREM 卷积：把天空贴图转成环境贴图，供全场景 PBR 材质反射
+        const pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader();
+        scene.environment = pmrem.fromEquirectangular(skyTex).texture;
+        pmrem.dispose();
 
-        const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+        scene.add(new THREE.HemisphereLight(0xbcd8f0, 0x6a7a55, 0.65));
+
+        const sunLight = new THREE.DirectionalLight(0xfff3e0, 2.6);
         sunLight.position.set(220, 320, 160);
         sunLight.castShadow = !isMobileDevice;
         if (sunLight.castShadow) {
@@ -1997,6 +2077,8 @@
           sunLight.shadow.mapSize.height = 2048;
           sunLight.shadow.camera.near = 10;
           sunLight.shadow.camera.far = 900;
+          sunLight.shadow.bias = -0.0006;
+          sunLight.shadow.normalBias = 0.02;
           const d = 160;
           sunLight.shadow.camera.left = -d;
           sunLight.shadow.camera.right = d;
