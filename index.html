@@ -687,11 +687,11 @@
     <!-- 赛车展台选车器 -->
     <div class="car-selector" role="group" aria-label="选择赛车">
       <div class="car-card active" id="car-veneno" role="button" tabindex="0" data-vehicle="veneno">
-        <div class="car-name">⚡ 毒药 (Veneno GT)</div>
+        <div class="car-name">⚡ 魅影 (Spectre S1)</div>
         <div class="car-specs">实测极速 342 公里/小时 · 0-100 约 2.5 秒<br>开阔弯与直道尾速占优 · 下压力随速增长</div>
       </div>
       <div class="car-card" id="car-gt3" role="button" tabindex="0" data-vehicle="gt3">
-        <div class="car-name">🏁 烈马 (Phantom GT3)</div>
+        <div class="car-name">🏁 赤霄 (Inferno GT3)</div>
         <div class="car-specs">实测极速 310 公里/小时 · 横向抓地 1.9g<br>半径 180 米以内的紧弯更快 · 漂移宽容度高</div>
       </div>
     </div>
@@ -829,7 +829,7 @@
       // 视觉参数（rimColor/drlColor/nitroColor）驱动选车后整车配色联动。
       const VEHICLES = {
         veneno: {
-          id: 'veneno', label: '毒药 (Veneno GT)', color: 0x00f0ff,
+          id: 'veneno', label: '魅影 (Spectre S1)', color: 0x00f0ff,
           rimColor: 0x242b35, drlColor: 0x00f0ff, nitroColor: 0x00f0ff,
           maxSpeed: 95, accelRate: 13.0, brakeRate: 34,
           latGripBase: 16.0,   // 基础横向抓地加速度 (m/s²)，约 1.6g
@@ -838,7 +838,7 @@
           wheelbase: 2.90,     // 轴距（米），与 wheelOffsets 实测一致
         },
         gt3: {
-          id: 'gt3', label: '烈马 (Phantom GT3)', color: 0xffaa00,
+          id: 'gt3', label: '赤霄 (Inferno GT3)', color: 0xffaa00,
           rimColor: 0xd4af37, drlColor: 0xffd27a, nitroColor: 0xff8a1e,
           maxSpeed: 86, accelRate: 12.2, brakeRate: 34,
           latGripBase: 18.0, latGripDownforce: 0.0006,
@@ -1581,8 +1581,8 @@
             obsGroup.add(body, lid, hoopLow, hoopHigh);
             // 斜贴反光条（提升夜间轮廓辨识）
             const stripe = new THREE.Mesh(stripeGeo, whiteStripeMat);
-            stripe.scale.set(0.9, 0.62, 1.6);
-            stripe.position.set(0, 0.58, 0.3);
+            stripe.scale.set(0.9, 0.8, 1.5);
+            stripe.position.set(0, 0.55, 0.3);
             stripe.rotation.z = 0.5;
             obsGroup.add(stripe);
 
@@ -1995,6 +1995,41 @@
 
         carGroup.add(mainWing, endplateL, endplateR, stayL, stayR);
 
+        /* 5b. 车型专属空力套件：让两辆车在剪影上一眼可辨。
+         *   魅影 spectre = 低趴高速机器：车尾鲨鱼鳍 + 前舱双导流鳃
+         *   赤霄 gt3   = 赛道灵活派：加高 GT 端板大尾翼 + Gurney 扰流唇 + 车顶进气铲
+         */
+        if (spec.id === 'gt3') {
+          // 加高尾翼立柱，抬升整体翼面高度（耐力赛 GT 姿态）
+          stayL.scale.y = 1.45; stayR.scale.y = 1.45;
+          stayL.position.y = 1.22; stayR.position.y = 1.22;
+          mainWing.position.y = 1.52; endplateL.position.y = 1.52; endplateR.position.y = 1.52;
+          // 翼面后缘 Gurney  flap（上翻小唇边）
+          const gurney = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.11, 0.04), carbonMat);
+          gurney.position.set(0, 1.60, 2.16);
+          gurney.rotation.x = 0.5;
+          // 加高 GT 端板
+          endplateL.scale.y = 1.5; endplateR.scale.y = 1.5;
+          carGroup.add(gurney);
+          // 座舱后进气铲 (Post-Cabin Air Scoop)，立于后甲板
+          const roofScoop = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.26, 0.42), darkTrimMat);
+          roofScoop.position.set(0, 0.82, 1.05);
+          roofScoop.rotation.x = -0.25;
+          carGroup.add(roofScoop);
+        } else {
+          // 魅影：发动机罩中央鲨鱼鳍脊（纵向稳定 + 攻击性轮廓）
+          const sharkFin = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.34, 1.3), carbonMat);
+          sharkFin.position.set(0, 1.02, 1.15);
+          carGroup.add(sharkFin);
+          // 前舱盖双导流鳃（散热开口的深色凹槽，微露于机盖面）
+          const ventGeo = new THREE.BoxGeometry(0.28, 0.08, 0.6);
+          const ventL = new THREE.Mesh(ventGeo, darkTrimMat);
+          ventL.position.set(-0.36, 1.00, -1.05);
+          const ventR = ventL.clone();
+          ventR.position.set(0.36, 1.00, -1.05);
+          carGroup.add(ventL, ventR);
+        }
+
         // 6. 前矩阵式锐角 LED 大灯组 (Matrix LED Headlights)
         const headMat = new THREE.MeshBasicMaterial({ color: 0xe0f7ff });
         const headLensGeo = new THREE.BoxGeometry(0.52, 0.08, 0.14);
@@ -2036,7 +2071,7 @@
           metalness: 0.08,
         });
         const rimOuterMat = new THREE.MeshStandardMaterial({
-          color: spec.color === 0x00f0ff ? 0x242b35 : 0xd4af37,
+          color: spec.rimColor,
           metalness: 0.94,
           roughness: 0.14,
           map: generateRimTexture(),
@@ -2104,7 +2139,7 @@
 
         // 9. 氮气双筒喷射火焰（圆锥渐变自发光尾焰）
         const nitroFlameMat = new THREE.MeshBasicMaterial({
-          color: 0x00f0ff,
+          color: spec.nitroColor,
           transparent: true,
           opacity: 0,
         });
@@ -2162,7 +2197,8 @@
           mergeStatic(carGroup, darkTrimMat); // 侧进气 + 扩散器导流叶
           mergeStatic(carGroup, chromeMat);   // 四出排气管
           // 轮内合并：轮圈 + 三辐条合成一体随轮滚动（每轮 7 → 4，共省 12 draw call）
-          wheels.forEach(wg => mergeStatic(wg, rimOuterMat));
+          // 注意：轮圈/轮辐已移入 spinner 子组，合并目标必须是 spinner 本身
+          wheels.forEach(wg => mergeStatic(wg.userData.spinner, rimOuterMat));
         }
 
         scene.add(carGroup);
@@ -2171,6 +2207,9 @@
           mesh: carGroup,
           paintMat: paintMat,
           tailMat: tailMat, // 尾灯材质（刹车灯联动）
+          drlMat: drlMat,               // 日行灯材质（选车换色联动）
+          rimOuterMat: rimOuterMat,     // 轮圈材质（选车换色联动）
+          nitroFlameMat: nitroFlameMat, // 尾焰材质（选车换色联动）
           wheels: wheels,
           nitroFlame: flameL, // 引用主火焰材质用于统一控制透明度
           nitroGroup: nitroGroup,
@@ -3055,8 +3094,23 @@
         selectedVehicleType = type;
         dom['car-veneno'].classList.toggle('active', type === 'veneno');
         dom['car-gt3'].classList.toggle('active', type === 'gt3');
-        // 展台模型即时换色（修复旧版选车后模型不联动的视觉脱节）
-        if (playerCar) playerCar.paintMat.color.setHex(VEHICLES[type].color);
+        /* 两车空力套件几何不同，换车必须重建整车模型而非仅换车漆。
+         * 选车卡片仅大厅可见，重建后把新车复位到展台原点等待自转展示。
+         */
+        if (playerCar) {
+          scene.remove(playerCar.mesh);
+          playerCar.mesh.traverse(obj => {
+            if (obj.isMesh) {
+              obj.geometry.dispose();
+              if (obj.material.map) obj.material.map.dispose();
+              obj.material.dispose();
+            }
+          });
+          playerCar = createSuperCar(VEHICLES[type]);
+          resetCarKinematics(playerCar, 0, S.v6.set(0, 0, 0));
+          playerCar.lutIndex = 0;
+          playerCar.prevLutIndex = 0;
+        }
       }
 
       function initEvents() {
