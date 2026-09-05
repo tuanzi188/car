@@ -479,6 +479,47 @@
     }
     .combo-badge.show { opacity: 1; transform: translateX(-50%) scale(1); }
 
+    /* 发车倒计时大数字（F1 式 4-3-2-1 → GO!） */
+    .countdown-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      z-index: 60;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }
+    .countdown-overlay.show { opacity: 1; }
+    .countdown-num {
+      font-size: 128px;
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: 4px;
+      text-shadow: 0 0 28px rgba(0, 240, 255, 0.95), 0 6px 0 rgba(0, 0, 0, 0.35);
+    }
+
+    /* 圈数切换提示 */
+    .lap-toast {
+      position: absolute;
+      top: 22%;
+      left: 50%;
+      transform: translateX(-50%) scale(0.9);
+      padding: 8px 26px;
+      border-radius: 26px;
+      background: linear-gradient(90deg, rgba(0, 240, 255, 0.92), rgba(34, 211, 238, 0.92));
+      color: #0a0f18;
+      font-size: 19px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      opacity: 0;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      box-shadow: 0 0 24px rgba(0, 240, 255, 0.55);
+      z-index: 59;
+    }
+    .lap-toast.show { opacity: 1; transform: translateX(-50%) scale(1); }
+
     /* 暂停遮罩 */
     .pause-overlay {
       position: absolute;
@@ -712,6 +753,8 @@
       <div class="sub-timing">
         <span>里程: <b id="hud-distance">0 米</b></span>
         <span>闪避障碍: <b id="hud-evaded">0</b></span>
+        <span>名次: <b id="hud-position">— / 4</b></span>
+        <span>圈数: <b id="hud-lap">1 / 3</b></span>
       </div>
       <div class="best-line" id="hud-best"></div>
     </div>
@@ -729,6 +772,11 @@
 
     <!-- 连击倍率徽标（居中偏上，避开前方视界） -->
     <div class="combo-badge" id="hud-combo"></div>
+
+    <!-- 发车倒计时大数字 -->
+    <div class="countdown-overlay" id="countdown-overlay"><div class="countdown-num" id="countdown-num">4</div></div>
+    <!-- 圈数切换提示 -->
+    <div class="lap-toast" id="lap-toast">第 2 圈</div>
 
     <!-- 顶部视角切换与音效 -->
     <div class="top-controls">
@@ -900,6 +948,13 @@
         BARRIER_DAMAGE_RATE: 14,  // 护栏刮擦耐久损失（%/秒）
       };
 
+      // 障碍公平性参数：把赛道抽象为 5 条可驾驶线路，用于生成后可达性校验
+      const FAIR_LANE_OFFSETS = [-7.5, -3.75, 0, 3.75, 7.5];
+      const FAIR_CLEARANCE_MARGIN = 0.45;
+      const FAIR_GROUP_DISTANCE = 14;
+      const FAIR_LANE_CHANGE_DISTANCE = 22;
+      const FAIR_LAYOUT_ATTEMPTS = 5;
+
       // 摄像机参数
       const CAMERA = {
         baseFov: 60,
@@ -935,6 +990,7 @@
       const START_LIGHT = { off: 0x1a1f28, red: 0xff0044, green: 0x00ff88 };
       const COUNTDOWN_STEPS = 4;     // 4 盏灯 = 4 个计时节拍
       const COUNTDOWN_STEP_SEC = 0.8;
+      const TOTAL_LAPS = 3;         // 方案 A：冲线 3 圈即完赛（耐久耗尽仍会提前出局）
 
       /* ---------------------- 1. 运行时状态与内存池 ---------------------- */
       let selectedVehicleType = 'veneno';
@@ -1013,7 +1069,7 @@
       // DOM 引用缓存
       const dom = {};
       // HUD 脏写缓存：仅在数值变化时写 DOM，避免每帧触发重排
-      const hudCache = { score: -1, distance: -1, evaded: -1, durability: -1, speed: -1, gear: '', nitro: -1, surface: '', gforce: '', combo: -1, best: -1 };
+      const hudCache = { score: -1, distance: -1, evaded: -1, durability: -1, speed: -1, gear: '', nitro: -1, surface: '', gforce: '', combo: -1, best: -1, lap: -1 };
 
       /** 将 60fps 标定的插值系数换算为任意帧率下的等效系数 */
       function dampByDelta(basePerFrame, delta) {
@@ -1652,6 +1708,56 @@
         activeObstacles.push(obs);
       }
 
+      /** 判断某条抽象车道是否会与障碍发生横向碰撞 */
+      function obstacleBlocksFairLane(obs, laneOffset) {
+        const radius = obs.userData.hitRadius || 2.2;
+        return Math.abs(obs.userData.lat - laneOffset) <= radius + FAIR_CLEARANCE_MARGIN;
+      }
+
+      /**
+       * 生成后公平性校验：
+       * 1. 同一障碍截面至少保留一条车道；
+       * 2. 相邻障碍组之间至少保留一条连续路线；
+       * 3. 若必须换线，障碍间距需留出基本横向反应距离。
+       */
+      function isObstacleLayoutFair(obstacles) {
+        if (obstacles.length === 0) return true;
+        const sorted = obstacles.slice().sort((a, b) => a.userData.t - b.userData.t);
+        let previousOpen = FAIR_LANE_OFFSETS.slice();
+        let previousT = sorted[0].userData.t;
+
+        for (let i = 0; i < sorted.length;) {
+          const group = [sorted[i]];
+          const baseT = sorted[i].userData.t;
+          let j = i + 1;
+          while (j < sorted.length && Math.abs(sorted[j].userData.t - baseT) * trackLut.length < FAIR_GROUP_DISTANCE) {
+            group.push(sorted[j]);
+            j++;
+          }
+
+          const openNow = FAIR_LANE_OFFSETS.filter(lane => (
+            group.every(obs => !obstacleBlocksFairLane(obs, lane))
+          ));
+          if (openNow.length === 0) return false;
+
+          const spacingMeters = Math.max(0, (baseT - previousT + 1) % 1) * trackLut.length;
+          const hasContinuity = openNow.some(lane => previousOpen.includes(lane));
+          const canChangeLane = spacingMeters >= FAIR_LANE_CHANGE_DISTANCE;
+          if (!hasContinuity && !canChangeLane) return false;
+
+          previousOpen = openNow;
+          previousT = baseT;
+          i = j;
+        }
+        return true;
+      }
+
+      /** 清除本轮刚生成的障碍，供公平布局重试复用对象池 */
+      function clearActiveObstacleLayout() {
+        for (let i = 0; i < activeObstacles.length; i++) activeObstacles[i].visible = false;
+        activeObstacles = [];
+      }
+
       /** 在 [startIdx, guardEnd] 内随机找一段连续采样点半径均 ≥ minRadius 的直道/缓弯 */
       function findEventStart(n, startIdx, guardEnd, minRadius, lengthSamples) {
         for (let attempt = 0; attempt < 40; attempt++) {
@@ -1714,11 +1820,8 @@
        * 不短于"该处车速 × 反应时间"，使高速段不会退化成不可反应的反应力测试。
        * 圈数递增时提高密度，形成难度曲线。
        */
-      function populateTrackObstacles() {
-        for (let i = 0; i < activeObstacles.length; i++) {
-          activeObstacles[i].visible = false;
-        }
-        activeObstacles = [];
+      function populateTrackObstaclesPass(useFairFallback) {
+        clearActiveObstacleLayout();
 
         const n = trackLut.count;
         const spec = VEHICLES[selectedVehicleType];
@@ -1734,7 +1837,7 @@
         let placed = 0;
 
         // 动态危险事件：第 2 圈起随机插入，事件段整体跳过正常布点避免重叠
-        const evt = planDangerEvent(spec, n, targetCount, Math.floor(n * 0.06), guardEnd);
+        const evt = useFairFallback ? null : planDangerEvent(spec, n, targetCount, Math.floor(n * 0.06), guardEnd);
         if (evt) {
           for (let e = 0; e < evt.lanes.length; e++) {
             if (placed >= targetCount) break;
@@ -1750,7 +1853,9 @@
           const vPass = Math.max(12, corneringSpeed(spec, r));
           const needMeters = vPass * reactionSec + 8;
           const needSamples = Math.max(8, Math.ceil(needMeters / trackLut.spacing));
-          const laneOffset = (Math.random() - 0.5) * laneRange;
+          const laneOffset = useFairFallback
+            ? FAIR_LANE_OFFSETS[(placed + lapCount) % FAIR_LANE_OFFSETS.length]
+            : (Math.random() - 0.5) * laneRange;
 
           const obs = obstaclePool[placed];
           placeObstacle(obs, idx / n, laneOffset);
@@ -1758,6 +1863,15 @@
           placed++;
           idx += needSamples;
         }
+      }
+
+      /** 先尝试随机布局；若连续不满足可达性，切换为确定性的公平保底布局 */
+      function populateTrackObstacles() {
+        for (let attempt = 0; attempt < FAIR_LAYOUT_ATTEMPTS; attempt++) {
+          populateTrackObstaclesPass(false);
+          if (isObstacleLayoutFair(activeObstacles)) return;
+        }
+        populateTrackObstaclesPass(true);
       }
 
       /** 警示顶灯相位闪烁 + 被撞障碍的倒地动画 */
@@ -2883,13 +2997,48 @@
         }
       }
 
+      let lapToastTimer = 0;
+      function showLapToast(text) {
+        const el = dom['lap-toast'];
+        if (!el) return;
+        el.textContent = text;
+        el.classList.add('show');
+        clearTimeout(lapToastTimer);
+        lapToastTimer = setTimeout(() => el.classList.remove('show'), 1400);
+      }
+
+      /** F1 式倒计时数字：4-3-2-1 → GO!（0.9s 后淡出） */
+      let goHideTimer = 0;
+      function updateCountdownDisplay() {
+        const ov = dom['countdown-overlay'];
+        const numEl = dom['countdown-num'];
+        if (!ov || !numEl) return;
+        if (countdownTime > 0) {
+          const sec = Math.max(1, Math.min(COUNTDOWN_STEPS, Math.ceil(countdownTime / COUNTDOWN_STEP_SEC)));
+          if (numEl.textContent !== String(sec)) numEl.textContent = String(sec);
+          ov.classList.add('show');
+        } else {
+          if (numEl.textContent !== 'GO!') {
+            numEl.textContent = 'GO!';
+            clearTimeout(goHideTimer);
+            goHideTimer = setTimeout(() => ov.classList.remove('show'), 900);
+          }
+        }
+      }
+
       function updateLapProgress(car) {
         const n = trackLut.count;
         const prevT = car.prevLutIndex === undefined ? car.lutIndex : car.prevLutIndex;
         // 由后向前跨越起点视为完成一圈：递增圈数并按更高密度重排障碍物
         if (prevT > n * 0.88 && car.lutIndex < n * 0.12) {
           lapCount++;
+          // 方案 A：冲线总圈数即完赛（胜利结算，AI 名次同时定格）
+          if (lapCount > TOTAL_LAPS) {
+            triggerGameOver(true);
+            return;
+          }
           populateTrackObstacles();
+          showLapToast('第 ' + lapCount + ' 圈');
         }
         car.prevLutIndex = car.lutIndex;
       }
@@ -2959,6 +3108,7 @@
           'finish-title', 'finish-desc', 'car-veneno', 'car-gt3', 'btn-gas', 'btn-brake',
           'btn-steer-left', 'btn-steer-right', 'portrait-tip',
           'fatal-screen', 'hud-combo', 'hud-best', 'lobby-best', 'pause-overlay',
+          'hud-position', 'hud-lap', 'countdown-overlay', 'countdown-num', 'lap-toast',
         ];
         ids.forEach(id => { dom[id] = document.getElementById(id); });
       }
@@ -3051,6 +3201,19 @@
           dom['hud-durability-fill'].className = 'durability-bar-fill' + (critical ? ' critical' : '');
         }
         updateComboHud();
+        // 实时名次
+        const posEl = dom['hud-position'];
+        if (posEl) {
+          const rank = computePlayerRank();
+          const text = rank + ' / 4';
+          if (posEl.textContent !== text) posEl.textContent = text;
+        }
+        // 圈数进度
+        if (hudCache.lap !== lapCount) {
+          hudCache.lap = lapCount;
+          const lapEl = dom['hud-lap'];
+          if (lapEl) lapEl.textContent = lapCount + ' / ' + TOTAL_LAPS;
+        }
       }
 
       function flashDangerAlert() {
@@ -3575,6 +3738,168 @@
         skidIndex = 0;
       }
 
+      /* ---------------------- AI 对手车（轨道车模型） ---------------------- */
+      /* 不走滑移物理：沿赛道中心线推进 + 贪心避障 + 曲率限速 + 相对玩家调速，
+       * 保证 AI 永不飞出赛道；玩家与 AI 碰撞时双方减速、AI 横向弹开。 */
+      const AI_CARS = [];
+      const AI_COLORS = [0x22d3ee, 0xf472b6, 0xa3e635];
+      const AI_VEHICLE_IDS = ['veneno', 'gt3', 'veneno'];
+      const AI_START_LATS = [-5.5, 5.5, 8.0];
+      const aiTmpA = new THREE.Vector3();
+      const aiTmpB = new THREE.Vector3();
+
+      function initAICars() {
+        while (AI_CARS.length) AI_CARS.pop();
+        for (let i = 0; i < 3; i++) {
+          const base = VEHICLES[AI_VEHICLE_IDS[i % AI_VEHICLE_IDS.length]];
+          const car = createSuperCar(Object.assign({}, base, { color: AI_COLORS[i] }));
+          if (isMobileDevice) {
+            car.mesh.traverse(m => { if (m.isMesh) m.castShadow = false; });
+          }
+          car.mesh.visible = false;
+          AI_CARS.push({ car, t: 0, lat: 0, v: 0, laps: 0, targetLat: 0, steerVisual: 0, cooldown: 0 });
+        }
+      }
+
+      function resetAICarsForRace() {
+        const pStart = trackCurve.getPointAt(0);
+        const tangent = trackCurve.getTangentAt(0).normalize();
+        const startAngle = Math.atan2(-tangent.x, -tangent.z);
+        for (let i = 0; i < AI_CARS.length; i++) {
+          const ai = AI_CARS[i];
+          ai.t = 0;
+          ai.lat = AI_START_LATS[i];
+          ai.targetLat = AI_START_LATS[i];
+          ai.v = 0;
+          ai.laps = 0;
+          ai.steerVisual = 0;
+          ai.cooldown = 0;
+          ai.car.mesh.visible = true;
+          ai.car.lutIndex = 0;
+          ai.car.prevLutIndex = 0;
+          const bin = aiTmpA.crossVectors(tangent, S.axisY).normalize();
+          ai.car.mesh.position.copy(pStart).addScaledVector(bin, ai.lat);
+          ai.car.mesh.position.y = 0.25;
+          ai.car.mesh.quaternion.setFromUnitVectors(S.axisZneg, tangent);
+          resetCarKinematics(ai.car, startAngle, ai.car.mesh.position);
+          ai.car.pos.copy(ai.car.mesh.position);
+          ai.car.vLong = 0;
+          ai.car.vLat = 0;
+        }
+      }
+
+      function hideAICars() {
+        for (let i = 0; i < AI_CARS.length; i++) AI_CARS[i].car.mesh.visible = false;
+      }
+
+      /** 玩家当前名次（1 起始）：按"圈数 + 圈内进度"排序 */
+      function computePlayerRank() {
+        const n = trackLut.count;
+        let rank = 1;
+        const pProg = (lapCount - 1) + playerCar.lutIndex / n;
+        for (let i = 0; i < AI_CARS.length; i++) {
+          if (AI_CARS[i].laps + AI_CARS[i].t > pProg) rank++;
+        }
+        return rank;
+      }
+
+      function placeAIVisual(ai, delta) {
+        const pt = trackCurve.getPointAt(ai.t);
+        const tangent = trackCurve.getTangentAt(ai.t).normalize();
+        const bin = aiTmpB.crossVectors(tangent, S.axisY).normalize();
+        ai.car.mesh.position.copy(pt).addScaledVector(bin, ai.lat);
+        ai.car.mesh.position.y = 0.25;
+        ai.car.mesh.quaternion.setFromUnitVectors(S.axisZneg, tangent);
+        ai.car.pos.copy(ai.car.mesh.position);
+
+        const roll = (ai.v / WHEEL_RADIUS) * delta;
+        for (let w = 0; w < ai.car.wheels.length; w++) {
+          ai.car.wheels[w].children[0].rotation.x += roll;
+          if (w < 2) ai.car.wheels[w].rotation.y = ai.steerVisual;
+        }
+      }
+
+      function updateAICars(delta) {
+        if (countdownTime > 0) return; // 倒计时期间停在起跑格
+        const n = trackLut.count;
+        const trackLen = trackLut.length;
+        const pProg = (lapCount - 1) + playerCar.lutIndex / n;
+
+        for (let i = 0; i < AI_CARS.length; i++) {
+          const ai = AI_CARS[i];
+          const idx = Math.max(0, Math.min(n - 1, Math.round(ai.t * n)));
+          const r = trackLut.radius[idx];
+          const vLimit = Math.max(10, corneringSpeed(ai.car.spec, r));
+          let sf = 1;
+
+          // 1. 贪心避障：前方约 110m 内最近且横向接近的障碍 → 提前绕到外侧
+          let nearestDt = 0.055;
+          let nearestLat = null;
+          for (let j = 0; j < activeObstacles.length; j++) {
+            const obs = activeObstacles[j];
+            if (!obs.visible) continue;
+            const dt = obs.userData.t - ai.t;
+            if (dt < 0 || dt > nearestDt) continue;
+            if (Math.abs(obs.userData.lat - ai.lat) < 3.0) {
+              nearestDt = dt;
+              nearestLat = obs.userData.lat;
+            }
+          }
+          if (nearestLat !== null) {
+            const side = nearestLat >= ai.lat ? 1 : -1;
+            ai.targetLat = Math.max(-8.5, Math.min(8.5, nearestLat + side * 4.4));
+            sf *= 0.9 + 0.1 * (nearestDt / 0.055);
+          } else {
+            ai.targetLat = 0;
+          }
+
+          // 2. 高密度危险段（走廊/窄道）额外减速，玩家可趁机超车
+          let dense = 0;
+          for (let j = 0; j < activeObstacles.length; j++) {
+            const obs = activeObstacles[j];
+            if (!obs.visible) continue;
+            const dt = obs.userData.t - ai.t;
+            if (dt >= 0 && dt < 0.05) dense++;
+          }
+          if (dense >= 3) sf *= 0.78;
+
+          // 3. 相对玩家调速：落后追近、领先放水，保持竞争张力
+          const gap = pProg - (ai.laps + ai.t);
+          if (gap > 0.015) sf *= 1.06;
+          else if (gap < -0.015) sf *= 0.94;
+
+          // 4. 速度积分与进度推进（v 以 ≤14 m/s² 爬升，从起跑格平稳起步）
+          const targetV = Math.min(vLimit * 0.94 * sf, ai.v + 14 * delta);
+          ai.v += (targetV - ai.v) * Math.min(1, delta * 1.4);
+          ai.v = Math.max(0, ai.v);
+          ai.t += (ai.v / trackLen) * delta;
+          if (ai.t >= 1) { ai.t -= 1; ai.laps++; }
+          ai.lat += (ai.targetLat - ai.lat) * Math.min(1, delta * 3.0);
+
+          // 转向视觉（曲率越大转角越大）
+          const steerTarget = r > 0 ? Math.max(0, Math.min(0.35, 0.22 / r)) : 0;
+          ai.steerVisual += (steerTarget - ai.steerVisual) * Math.min(1, delta * 4);
+
+          // 5. 车-车碰撞（仅玩家 vs AI：双方减速 + AI 横向弹开）
+          if (ai.cooldown <= 0) {
+            const dx = ai.car.mesh.position.x - playerCar.pos.x;
+            const dz = ai.car.mesh.position.z - playerCar.pos.z;
+            if (dx * dx + dz * dz < 2.35 * 2.35) {
+              playerCar.vLong *= 0.84;
+              playerCar.vLat *= 0.7;
+              ai.v *= 0.72;
+              ai.cooldown = 1.2;
+              ai.targetLat = ai.lat + (playerCar.pos.x > ai.car.mesh.position.x ? -2.6 : 2.6);
+              AudioFX.crash();
+              Haptics.crash();
+            }
+          }
+          ai.cooldown = Math.max(0, ai.cooldown - delta);
+          ai.car.lutIndex = Math.round(ai.t * n);
+          placeAIVisual(ai, delta);
+        }
+      }
+
       function resetRaceData() {
         durability = 100;
         totalScore = 0;
@@ -3636,23 +3961,37 @@
         // 先复位赛事数据（含 lapCount），再据此密度布点；顺序颠倒会沿用上一局圈数
         resetRaceData();
         populateTrackObstacles();
+        resetAICarsForRace();
         clearSkidmarks();
         resetAllInputs();
 
         // 进入发车倒计时：动力锁死，逐盏亮红灯，全绿后放行
         countdownTime = COUNTDOWN_STEPS * COUNTDOWN_STEP_SEC;
+        const cdOv = dom['countdown-overlay'];
+        const cdNum = dom['countdown-num'];
+        if (cdOv) cdOv.classList.add('show');
+        if (cdNum) cdNum.textContent = String(COUNTDOWN_STEPS);
         updateStartLights();
 
         isRacing = true;
         lastFrameTime = performance.now();
       }
 
-      function triggerGameOver() {
+      function triggerGameOver(win) {
         if (!isRacing) return;
         isRacing = false;
         countdownTime = 0;
         AudioFX.silence();
         dom['hud'].classList.remove('active');
+
+        const rank = computePlayerRank();
+        if (win) {
+          dom['finish-title'].innerText = rank === 1 ? '🏆 冠军冲线！' : '🏁 比赛完成';
+          dom['finish-desc'].innerText = '你以第 ' + rank + ' / 4 名完赛';
+        } else {
+          dom['finish-title'].innerText = '车辆报废';
+          dom['finish-desc'].innerText = '车辆受损严重，无法继续行驶！';
+        }
 
         const isRecord = totalScore > bestScore;
         if (isRecord) {
@@ -3661,10 +4000,11 @@
         }
 
         dom['finish-stats'].innerHTML =
+          '最终名次: <b style="color:#00f0ff;font-size:20px;">第 ' + computePlayerRank() + ' / 4 名</b><br>' +
           '突围总得分: <b style="color:#00f0ff;font-size:20px;">' + totalScore + ' 分</b><br>' +
           '极限行车里程: <b>' + Math.round(totalDistanceMeters) + ' 米</b><br>' +
           '成功闪避障碍: <b style="color:#00ff88">' + totalEvadedCount + ' 处</b><br>' +
-          '完成圈数: <b>' + lapCount + ' 圈</b><br>' +
+          '完成圈数: <b>' + Math.min(lapCount - 1, TOTAL_LAPS) + ' / ' + TOTAL_LAPS + ' 圈</b><br>' +
           (isRecord
             ? '<b style="color:#ffaa00">🏆 刷新历史最高分！</b>'
             : '历史最高: <b>' + bestScore + ' 分</b>');
@@ -3680,12 +4020,19 @@
         isPaused = false;
         if (dom['pause-overlay']) dom['pause-overlay'].classList.remove('show');
 
+        // 复位倒计时与圈数提示
+        const cdOv = dom['countdown-overlay'];
+        if (cdOv) cdOv.classList.remove('show');
+        const lapToast = dom['lap-toast'];
+        if (lapToast) lapToast.classList.remove('show');
+
         // 彻底复位：清除残余物理量、车身姿态、车轮转角与赛道残骸
         if (playerCar) {
           resetCarKinematics(playerCar, 0, S.v6.set(0, 0, 0));
           playerCar.lutIndex = 0;
           playerCar.prevLutIndex = 0;
         }
+        hideAICars();
         for (let i = 0; i < activeObstacles.length; i++) activeObstacles[i].visible = false;
         activeObstacles = [];
         clearSkidmarks();
@@ -3755,6 +4102,7 @@
             countdownTime = Math.max(0, countdownTime - delta);
             updateStartLights();
             if (countdownTime === 0) AudioFX.blip();
+            updateCountdownDisplay();
             pollControllerInputs();
             inputs.throttle = 0;
             inputs.nitro = false;
@@ -3772,6 +4120,7 @@
 
           pollControllerInputs();
           updateCarPhysics(playerCar, delta);
+          updateAICars(delta);
           if (!isRacing) { renderer.render(scene, camera); return; } // 本帧已报废
           updateObstacleKnockdown(delta);
           updateCamera(delta);
@@ -3813,6 +4162,7 @@
         loadBestScore();
         initSceneEnvironment();
         playerCar = createSuperCar(VEHICLES[selectedVehicleType]);
+        initAICars();
         initObstacleRadar();
         initEvents();
         syncTouchSteer();
