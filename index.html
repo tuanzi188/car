@@ -838,24 +838,29 @@
       }
 
       /* 触屏设备：整叠仪表（氮气表 + 速度表）缩小并居中避让手指，避免大屏横屏盖住右侧按钮组 */
+      /* 触屏端摇杆缩小一档（210→190）；仪表移到右上角（与左上计时面板对称），
+       * 正前方视野完全让出，不再压在赛道中央下方 */
+      .steer-pad { width: 190px; height: 76px; border-radius: 38px; }
+      .steer-knob { width: 58px; height: 58px; margin: -29px 0 0 -29px; }
       .gauge-stack {
-        bottom: max(14px, env(safe-area-inset-bottom));
-        right: 50%;
-        transform: translateX(50%);
-        align-items: center;
-        gap: 8px;
+        top: max(16px, env(safe-area-inset-top));
+        right: max(16px, env(safe-area-inset-right));
+        bottom: auto;
+        transform: none;
+        align-items: flex-end;
+        gap: 6px;
       }
       .dashboard-cluster {
-        width: 110px;
-        height: 110px;
-        opacity: 0.92;
-        border-width: 1.5px;
+        width: 86px;
+        height: 86px;
+        opacity: 0.62;
+        border-width: 1px;
       }
-      .speed-number { font-size: 28px; }
-      .speed-unit { font-size: 9px; }
-      .gear-display { font-size: 12px; }
+      .speed-number { font-size: 21px; }
+      .speed-unit { font-size: 8px; }
+      .gear-display { font-size: 10px; }
       .gforce-text { display: none; }
-      .nitro-meter { width: 78px; height: 8px; }
+      .nitro-meter { width: 62px; height: 7px; }
     }
 
     @media (max-width: 900px) {
@@ -895,11 +900,11 @@
 
     /* 超小屏（如 iPhone SE / 小型折叠屏）自适应微调 */
     @media (max-width: 480px) {
-      .steer-pad { width: 172px; height: 74px; border-radius: 37px; }
-      .steer-knob { width: 56px; height: 56px; margin: -28px 0 0 -28px; }
+      .steer-pad { width: 156px; height: 66px; border-radius: 33px; }
+      .steer-knob { width: 50px; height: 50px; margin: -25px 0 0 -25px; }
       .pedal-nitro { width: 70px; height: 70px; font-size: 12px; }
       .pedal-brake { width: 58px; height: 54px; font-size: 10px; }
-      .dashboard-cluster { width: 96px; height: 96px; }
+      .dashboard-cluster { width: 80px; height: 80px; }
       .speed-number { font-size: 24px; }
       .nitro-meter-wrap { gap: 6px; padding: 4px 8px; }
       .nitro-meter { width: 62px; }
