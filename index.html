@@ -196,6 +196,20 @@
     }
     .danger-alert.show { display: block; }
 
+    /* 实时小地图：左上角赛事面板正下方，半透明不干扰驾驶 */
+    .minimap {
+      position: absolute;
+      top: max(158px, env(safe-area-inset-top) + 142px);
+      left: max(16px, env(safe-area-inset-left));
+      width: 132px;
+      height: 132px;
+      border-radius: 16px;
+      background: rgba(13, 24, 40, 0.42);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      box-shadow: 0 6px 22px rgba(10, 20, 40, 0.35);
+      pointer-events: none;
+    }
+
     /* 右下角仪表堆叠：氮气表压在速度表上方，同属"驾驶侧读数"，共用一个定位锚点 */
     .gauge-stack {
       position: absolute;
@@ -838,18 +852,19 @@
       }
 
       /* 触屏设备：整叠仪表（氮气表 + 速度表）缩小并居中避让手指，避免大屏横屏盖住右侧按钮组 */
-      /* 触屏端摇杆缩小一档（210→190）；仪表移到右上角（与左上计时面板对称），
+      /* 触屏端摇杆缩小一档（210→190）；仪表移到右下踏板上方（右上已被耐久面板占位），
        * 正前方视野完全让出，不再压在赛道中央下方 */
       .steer-pad { width: 190px; height: 76px; border-radius: 38px; }
       .steer-knob { width: 58px; height: 58px; margin: -29px 0 0 -29px; }
       .gauge-stack {
-        top: max(16px, env(safe-area-inset-top));
+        top: auto;
+        bottom: max(152px, env(safe-area-inset-bottom) + 144px);
         right: max(16px, env(safe-area-inset-right));
-        bottom: auto;
         transform: none;
         align-items: flex-end;
         gap: 6px;
       }
+      .minimap { width: 96px; height: 96px; }
       .dashboard-cluster {
         width: 86px;
         height: 86px;
@@ -988,6 +1003,9 @@
       <div class="best-line" id="hud-best"></div>
     </div>
 
+    <!-- 实时小地图（飞车式旋转跟随：玩家箭头固定朝上、赛道随车头旋转） -->
+    <canvas class="minimap" id="hud-minimap" width="256" height="256" aria-label="实时小地图"></canvas>
+
     <!-- 耐久与路面状态 -->
     <div class="drift-panel">
       <div class="pos-title">车辆战损耐久</div>
@@ -1015,13 +1033,13 @@
 
     <!-- PC 控制说明 -->
     <div class="pc-controls-bar">
-      <span class="key-badge">W / ↑</span> 油门 · <span class="key-badge">S / ↓</span> 刹车倒车 · <span class="key-badge">A / D</span> 转向闪避 · <span class="key-badge">空格</span> 手刹漂移 · <span class="key-badge">SHIFT</span> 点按放一瓶氮气（集满自动入库 · 连按双喷） · <span class="key-badge">C</span> 切换视角 · <span class="key-badge">M</span> 静音
+      <span class="key-badge">W / ↑</span> 油门 · <span class="key-badge">S / ↓</span> 刹车倒车 · <span class="key-badge">A / D</span> 转向闪避 · <span class="key-badge">S + A/D</span> 方向漂移（松开出弯小喷 · 持续漂移进大漂移） · <span class="key-badge">空格</span> 急刹手刹 · <span class="key-badge">SHIFT</span> 点按放一瓶氮气（集满自动入库 · 连按双喷） · <span class="key-badge">C</span> 切换视角 · <span class="key-badge">M</span> 静音
     </div>
 
     <!-- 移动端触控：左手拖动式模拟转向（拇指横移即舵角），右手刹车/氮气，油门自动 -->
     <div class="mobile-touch-left" id="touch-controls-left">
       <div class="steer-pad" id="steer-pad" aria-label="拖动转向">
-        <div class="steer-pad-label">拖动转向 · 松手回中</div>
+        <div class="steer-pad-label">拖动转向 · 重拖漂移 · 松手回中</div>
         <div class="steer-knob" id="steer-knob"></div>
       </div>
     </div>
@@ -1200,16 +1218,35 @@
         camShakeAmp: 0.004,     // 氮气持续相机微震幅度（弧度）
       };
       const HANDBRAKE_BRAKE_MULT = 1.6;
+      /* 方向漂移（刹车+横舵触发的动力漂移）：比手刹制动低得多（0.35 vs 1.6），
+       * 甩尾靠横向阻尼骤降而非拖速度，玩家用走线换集气而不掉速——
+       * 飞车式"入弯漂移、出弯爆发"的核心手感。 */
+      const DRIFT_BRAKE_MULT = 0.35;
+      const DRIFT_MINI_BOOST_SEC = 0.4;     // 松开漂移键的出弯小喷时长
+      const DRIFT_MINI_BOOST_MIN = 0.35;    // 触发小喷所需的最短有效漂移时间（防误触白嫖）
+      const MINI_BOOST_ACCEL = 0.85;        // 小喷加速度加成（线性衰减；0.45 时实测仅 +2.5km/h 无感）
+      /* 分级小喷：短漂蓝喷（衔接用），长漂红喷（非线性回报）——大弯长漂接双喷的追求目标 */
+      const DRIFT_RED_MIN = 1.2;            // 红喷门槛：本次按住的有效漂移时长（秒）
+      const DRIFT_RED_BOOST_SEC = 0.7;      // 红喷时长（秒）
+      const DRIFT_RED_ACCEL = 1.2;          // 红喷加速度加成（0.7 时仅 +6.7km/h，提档后约 +11km/h）
+      /* 大漂移：方向漂移持续满 DRIFT_RED_MIN 后进入的深滑阶段——
+       * 滑得更深、集气 ×1.5，松开正好接红喷，构成「小滑→深滑→红喷」升级链。 */
+      const DRIFT_BIG_SLIP_MULT = 0.6;      // 大漂移横向阻尼再乘系数（越小滑得越深）（0.7→0.6：红喷角度更大）
+      const DRIFT_BIG_GAIN_MULT = 1.5;      // 大漂移集气倍率
+      const DRIFT_ANGLE_RAMP_SEC = 0.45;    // 漂移侧滑角随按住时长从入口阻尼渐滑到全滑（秒）（0.9→0.45：半秒拉满，跟手）
+      const DRIFT_ENTRY_LAT_DAMP = 1.6;     // 漂移入口横向阻尼：低于正常抓地以建立 isDrifting，高于全滑=入弯小角度（3.2→2.2→1.6：入口更滑、甩尾更早）
+      const DRIFT_FULL_LAT_DAMP = 1.0;      // 漂移全滑阻尼：比手刹(1.5)更深——漂移甩尾幅度的大旋钮（侧滑角≈30°）
+      const DRIFT_STEER_HEADROOM_MULT = 1.35; // 漂移中物理舵角放宽：抓地圆项×1.35，车头转得更深→甩尾更猛（飞车"漂移中方向打得更满"）
       const HANDBRAKE_LAT_DAMP = 1.5; // 拉手刹时横向对齐速率骤降 → 后轴滑移
       const STEER_MAX_RAD = 0.56;     // 最大前轮转角（弧度，同时也是视觉极限）
       const STEER_FILTER_RATE = 20;   // 舵角基础响应速率 (1/s)——弯中跟手的主旋钮（18→20：响应更快）
       const TOUCH_STEER_DEAD_ZONE = 8;    // 转向盘中心死区（像素），杜绝拇指停放时的抖动舵角
-      const TOUCH_DRIFT_STEER_MIN = 0.55; // 触屏"刹车 + 横舵"组合漂移所需的最小横向幅度
       const TOUCH_STEER_GAIN = 1.15;      // 触屏转向幅度增益：拉 87% 行程即满舵，缓解"转不动"
+      const DRIFT_SIM_MIN = 0.8;          // 触屏/手柄模拟量漂移门槛：重拖 80% 以上才漂（轻拖=正常转向）
       const WHEEL_RADIUS = 0.38;      // 车轮半径（米），用于轮速滚动换算
-      const SLIP_DRIFT_MIN = 2.6;     // 横向滑移速度阈值（米/秒），超过判定为漂移
-      const DRIFT_SPEED_FLOOR = 8;    // 漂移判定的最低纵向速度（米/秒），排除原地打轮
-      const GRIP_STEER_HEADROOM = 1.22; // 物理舵角余量：略大于抓地圆所需角度才能触发滑移（1.35→1.22：减少高速推头）
+      const SLIP_DRIFT_MIN = 2.4;     // 横向滑移速度阈值（米/秒），超过判定为漂移（2.6→2.4：更快进入漂移态，仍在正常转弯稳态 2.2 之上）
+      const DRIFT_SPEED_FLOOR = 6;    // 漂移判定的最低纵向速度（米/秒），排除原地打轮（8→6：低速弯也能漂起来）
+      const GRIP_STEER_HEADROOM = 1.12; // 物理舵角余量：非漂移转弯的幅度旋钮（1.22→1.12：普通转向更稳、更收敛，漂移时 ×1.35 仍大幅放开，区分更明显）
       const NITRO_POWER_TAPER_RELIEF = 0.55; // 氮气状态下动力衰减放宽系数
       const SUSPENSION_ROLL_RATE = 10;  // 侧倾收敛速率 (1/s)
       const SUSPENSION_PITCH_RATE = 12; // 俯仰收敛速率 (1/s)
@@ -1301,7 +1338,7 @@
        * 全部对象池环形复用（超出复用最老），主循环零 new 零 GC。
        * 烟从 300 降到 180：2m+ 大粒子 overdraw 是半透明里最贵的，密度缺口由发射率补。 */
       const MAX_SKID_SEGMENTS = isMobileDevice ? 260 : 700; // 胎印实例上限（InstancedMesh 环形缓冲）
-      const FX_SMOKE_MAX = isMobileDevice ? 90 : 180;
+      const FX_SMOKE_MAX = isMobileDevice ? 110 : 180; // 移动端 90→110：漂移更猛更久，烟粒子给足余量（仍是小开销）
       const FX_SPARK_MAX = isMobileDevice ? 75 : 150;
       const FX_JET_MAX = isMobileDevice ? 25 : 50;
       const fxScale = isMobileDevice ? 0.5 : 1;           // 发射量倍率（数量减半靠它，池容量只是兜底）
@@ -1343,6 +1380,7 @@
       // 赛道设施清单：大厅展台只展示车辆，这些设施整体隐藏以省掉全部相关 draw call，
       // 发车时再统一恢复（护栏/看台/广告牌/龙门架等均设了 frustumCulled=false，隐藏比剔除更必要）
       const trackProps = [];
+      let staticGroundMesh = null;  // 地面不进 trackProps（大厅展台需要它可见），单独持引用做矩阵冻结
       let lobbyFrameCount = 0;
       let scoreHudUpdateFrame = 0;
       let nitroFovKick = 0;   // 放瓶瞬间的视野冲击量（1→0 线性衰减），三视角共用
@@ -1405,7 +1443,7 @@
       };
 
       // 输入状态（键盘 / 触控 / 手柄三源分离，避免互相覆盖）
-      const inputs = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false };
+      const inputs = { throttle: 0, brake: 0, steer: 0, handbrake: false, nitro: false, drift: false };
       const keys = {};
       /* 触屏输入：油门自动接管，故无 gas 位；左右二值键由转向盘的模拟幅度 steerValue 取代 */
       const touchState = { brake: false, nitro: false, steerValue: 0 };
@@ -4171,6 +4209,12 @@
           suspensionPitch: 0,
           suspensionRoll: 0,
           isDrifting: false,
+          _driftBtnPrev: false, // 方向漂移上一帧状态（松开边沿→小喷）
+          _bigDriftPrev: false, // 大漂移上一帧状态（进入边沿→HUD 提示）
+          _driftHoldT: 0,       // 本次按住期间的有效漂移累计（秒）
+          _miniBoostT: 0,       // 出弯小喷剩余时间（秒）
+          _miniBoostA: 0,       // 本次小喷加速度档位（蓝0.45 / 红0.7）
+          _miniBoostSec: 1,     // 本次小喷总时长（衰减归一分母，防除零置1）
           nitroAmount: 0,       // 集气槽 0~100%，满 100 由 bankNitroBottles 入库一瓶
           nitroBottles: 0,      // 库存瓶数，点按消耗
           nitroBurst: 0,        // 当前这瓶还剩多少秒自动播放
@@ -4265,8 +4309,8 @@
         if (sunLight.castShadow) {
           // 阴影相机随车平移（updateSunShadow），正交盒只需覆盖车辆近旁，
           // 因此可用更小的 mapSize 获得更高阴影精度与更低开销。
-          sunLight.shadow.mapSize.width = 512;
-          sunLight.shadow.mapSize.height = 512;
+          sunLight.shadow.mapSize.width = shadowMapRes;
+          sunLight.shadow.mapSize.height = shadowMapRes;
           sunLight.shadow.camera.near = 10;
           sunLight.shadow.camera.far = 900;
           sunLight.shadow.bias = -0.0006;
@@ -4293,6 +4337,7 @@
         groundMesh.rotation.x = -Math.PI / 2;
         groundMesh.receiveShadow = true;
         scene.add(groundMesh);
+        staticGroundMesh = groundMesh;
 
         /* 重量级设施（赛道/云/接地影/障碍池/胎印粒子）拆到 buildTrackEnv()
          * 延迟构建（boot 里 1.2s 预热）：大厅被 Modal 盖住时后台建好，
@@ -4307,6 +4352,15 @@
         createGroundShadows();
         initObstaclePool();
         initSkidmarksAndSmoke();
+        /* 静态设施矩阵冻结：trackProps 全是建成后从不位移的赛道家具
+         * （路面/护栏/门架/看台/广告牌/计分牌——发车灯只改材质色、看台是静态 InstancedMesh，
+         * 已逐个核实无变换动画）。关掉逐帧矩阵重算并预合成一次本地矩阵，
+         * 每帧 updateMatrixWorld 遍历直接跳过这些节点的 compose。
+         * 动态体（车辆/障碍/粒子/云/胎印）不在本列表，不受影响。 */
+        for (let i = 0; i < trackProps.length; i++) {
+          trackProps[i].traverse(o => { o.matrixAutoUpdate = false; o.updateMatrix(); });
+        }
+        if (staticGroundMesh) { staticGroundMesh.matrixAutoUpdate = false; staticGroundMesh.updateMatrix(); }
         trackEnvReady = true;
         const btn = dom['start-btn'];
         if (btn) btn.disabled = false;
@@ -4499,9 +4553,12 @@
          *    玩家必须减速过弯；视觉舵角仍按满舵偏转，避免车轮看着不动。
          *    氮气激活时物理舵角上限 -12%（高速更稳，不会一碰就甩）。 */
         const nitroSteer = car.isNitroActive ? NITRO_CFG.steerReduction : 1;
+        /* 漂移中物理舵角放宽：抓地圆项 ×1.35（车头转得更深→vLat 增长更快→甩尾更猛），
+         * 但整体仍被 STEER_MAX_RAD 封顶，不会超过视觉满舵。 */
         const steerLimitPhys = Math.min(
           STEER_MAX_RAD,
-          GRIP_STEER_HEADROOM * aLatMax * spec.wheelbase / (vAbs * vAbs),
+          GRIP_STEER_HEADROOM * (inputs.drift ? DRIFT_STEER_HEADROOM_MULT : 1)
+            * aLatMax * spec.wheelbase / (vAbs * vAbs),
         ) * nitroSteer;
         const steerTarget = -inputs.steer * steerLimitPhys;
         /* 转向非线性响应：起转段速率 ×1.6（键盘一按就有"咬地"的瞬间响应），
@@ -4541,10 +4598,19 @@
           /* 启动瞬时推力脉冲 nitroKick：放瓶瞬间额外 +40% 推力，0.15 秒内指数衰减。
            * 与持续的高油门（targetThrottle）是两层叠加，做出"被踹出去"的推背感。 */
           const kickMult = 1 + (car.nitroKick || 0) * NITRO_CFG.kickBoost;
-          const power = targetThrottle * spec.accelRate * grip * kickMult
+          const miniBoostMult = 1 + (car._miniBoostT > 0
+            ? car._miniBoostA * (car._miniBoostT / car._miniBoostSec) : 0);
+          const power = targetThrottle * spec.accelRate * grip * kickMult * miniBoostMult
             * Math.max(0, 1 - taper * (Math.abs(car.vLong) / spec.maxSpeed));
           let brakeForce = targetBrake * spec.brakeRate * grip;
           if (inputs.handbrake) brakeForce += spec.brakeRate * HANDBRAKE_BRAKE_MULT;
+          else if (inputs.drift) {
+            /* 方向漂移"接管"刹车而非叠加：方向漂移本就要求按住刹车，
+             * 若全额常规制动力（34 m/s²）照常生效，漂移=全刹车急停，
+             * "保速甩尾"名存实亡。接管后漂移中只留 0.35×brakeRate 维持滑移，
+             * 净减速约 4~5 m/s²——这才是"用走线换速度"的合理对价。 */
+            brakeForce = Math.min(brakeForce, spec.brakeRate * DRIFT_BRAKE_MULT * grip);
+          }
 
           car.vLong += (power - brakeForce) * delta;
           car.vLong -= car.vLong * surface.drag * delta;
@@ -4561,7 +4627,19 @@
          *    超出上限的部分无法被抵消，表现为转向不足（推头冲出弯道外侧）。
          */
         let latDamp = surface.latDamp;
-        if (inputs.handbrake) latDamp = Math.min(latDamp, HANDBRAKE_LAT_DAMP);
+        if (inputs.handbrake || inputs.drift) {
+          if (inputs.drift) {
+            /* 漂移角度随按住时长累积：入弯即低抓地（入口阻尼）快速建立滑移，
+             * 持续按住侧滑角逐渐拉大（latDamp 渐降），红喷后进一步加深——
+             * "方向按得越久，甩得越狠"。 */
+            const ramp = Math.min(1, car._driftHoldT / DRIFT_ANGLE_RAMP_SEC);
+            let dl = DRIFT_ENTRY_LAT_DAMP - (DRIFT_ENTRY_LAT_DAMP - DRIFT_FULL_LAT_DAMP) * ramp;
+            if (car._driftHoldT >= DRIFT_RED_MIN) dl *= DRIFT_BIG_SLIP_MULT;
+            latDamp = Math.min(latDamp, dl);
+          } else {
+            latDamp = Math.min(latDamp, HANDBRAKE_LAT_DAMP);
+          }
+        }
         const latDecel = Math.max(-aLatMax, Math.min(aLatMax, car.vLat * latDamp));
         car.vLat -= latDecel * delta;
         car.lateralSlip = car.vLat;
@@ -4591,6 +4669,7 @@
           }
           car.vLong *= Math.pow(GAMEPLAY.BARRIER_SPEED_KEEP, delta);
           applyDamage(GAMEPLAY.BARRIER_DAMAGE_RATE * delta, true);
+          car._driftHoldT = 0; // 撞墙作废本次漂移：松键无小喷
           if (Math.abs(vLatNow) > 3) {
             flashDangerAlert();
             AudioFX.crash();
@@ -4611,9 +4690,34 @@
         if (car.isDrifting) {
           /* 氮气状态下漂移集气 ×1.5：烧胎更猛，攒气更快，
            * 鼓励"放氮气→漂移集气→再放氮气"的高级循环。 */
-          const driftMult = car.isNitroActive ? NITRO_CFG.driftGainMult : 1;
+          let driftMult = car.isNitroActive ? NITRO_CFG.driftGainMult : 1;
+          if (inputs.drift && car._driftHoldT >= DRIFT_RED_MIN) driftMult *= DRIFT_BIG_GAIN_MULT;
           chargeNitro(GAMEPLAY.NITRO_DRIFT_RATE * driftMult * delta);
+          if (inputs.drift) car._driftHoldT += delta;
         }
+        /* 方向漂移出弯小喷：漂移期间真实漂移满 DRIFT_MINI_BOOST_MIN 秒，松开（回正/松刹车）即触发推力脉冲。
+         * 与存瓶氮气独立——小喷是白送的手感奖励，存瓶是漂移攒出来的爆发。 */
+        if (car._driftBtnPrev && !inputs.drift) {
+          if (car._miniBoostT <= 0) {
+            if (car._driftHoldT >= DRIFT_RED_MIN) {
+              car._miniBoostT = DRIFT_RED_BOOST_SEC;
+              car._miniBoostA = DRIFT_RED_ACCEL;
+              car._miniBoostSec = DRIFT_RED_BOOST_SEC;
+              flashNitro('强力小喷');
+            } else if (car._driftHoldT >= DRIFT_MINI_BOOST_MIN) {
+              car._miniBoostT = DRIFT_MINI_BOOST_SEC;
+              car._miniBoostA = MINI_BOOST_ACCEL;
+              car._miniBoostSec = DRIFT_MINI_BOOST_SEC;
+              flashNitro('小喷');
+            }
+          }
+          car._driftHoldT = 0;
+        }
+        const bigNow = inputs.drift && car._driftHoldT >= DRIFT_RED_MIN;
+        if (bigNow && !car._bigDriftPrev) flashNitro('大漂移');
+        car._bigDriftPrev = bigNow;
+        car._driftBtnPrev = inputs.drift;
+        if (car._miniBoostT > 0) car._miniBoostT = Math.max(0, car._miniBoostT - delta);
 
         // 12. 里程与积分：浮点累加 + 连击倍率，彻底消除逐帧取整丢分与帧率耦合
         if (vMag > 0) {
@@ -4844,6 +4948,7 @@
             car.vLat *= ud.speedKeep;
             hitThisFrame = true;
             applyDamage(ud.damage * lapDamageScale()); // 非持续型损耗，内部已断连
+            car._driftHoldT = 0; // 撞障碍作废本次漂移
             flashDangerAlert();
             AudioFX.crash();
             Haptics.crash();
@@ -5089,6 +5194,7 @@
           'steer-pad', 'steer-knob', 'portrait-tip',
           'fatal-screen', 'hud-combo', 'hud-best', 'lobby-best', 'pause-overlay',
           'hud-position', 'hud-lap', 'countdown-overlay', 'countdown-num', 'lap-toast',
+          'hud-minimap',
         ];
         ids.forEach(id => { dom[id] = document.getElementById(id); });
       }
@@ -5296,6 +5402,163 @@
         scene.add(radarGroup);
       }
 
+      /* ---------------------- 实时小地图（飞车式旋转跟随） ---------------------- */
+      /* 玩家箭头固定朝上、赛道随车头旋转。旋转矩阵推导：世界偏移 (dx,dz) 映射到
+       * 屏幕 (sx,sy) = (dx·cos h − dz·sin h, dx·sin h + dz·cos h)，车头方向
+       * (-sin h, -cos h) 恒落在屏幕上方；canvas 的 y 轴向下恰好与旋转方向吻合。 */
+      const MINIMAP_VIEW_AHEAD = 420;   // 前方可视距离（米）
+      const MINIMAP_VIEW_BEHIND = 130;  // 后方可视距离（米）
+      const MM_SIZE = 256;              // canvas 内部分辨率（CSS 端 132/96 缩放显示）
+      let minimapCtx = null;
+      let minimapLast = 0;
+
+      function initMinimap() {
+        const cv = dom['hud-minimap'];
+        if (!cv) return;
+        minimapCtx = cv.getContext('2d');
+      }
+
+      function updateMinimap(now) {
+        if (!minimapCtx || !playerCar) return;
+        const cv = dom['hud-minimap'];
+        if (!isRacing || !trackLut.count) { minimapCtx.clearRect(0, 0, MM_SIZE, MM_SIZE); return; }
+        if (now - minimapLast < 150) return;   // 150ms 节流，不抢渲染帧
+        minimapLast = now;
+        const ctx = minimapCtx;
+        const C = MM_SIZE / 2;
+        const h = playerCar.heading;
+        const cosH = Math.cos(h), sinH = Math.sin(h);
+        const px = playerCar.pos.x, pz = playerCar.pos.z;
+        const pIdx = Math.round(playerCar.lutIndex);
+        const sp = trackLut.spacing;
+        const scale = (C - 18) / MINIMAP_VIEW_AHEAD;
+        const fwdN = Math.round(MINIMAP_VIEW_AHEAD / sp);
+        const bwdN = Math.round(MINIMAP_VIEW_BEHIND / sp);
+        const n = trackLut.count;
+
+        ctx.clearRect(0, 0, MM_SIZE, MM_SIZE);
+        ctx.save();
+        ctx.translate(C, C + 10);      // 玩家略偏下，前方留更多空间
+        ctx.rotate(h);                 // 车头朝上
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+
+        /* 后方路段：淡色，只给"刚错过什么"的余量 */
+        ctx.strokeStyle = 'rgba(148,163,184,0.35)';
+        ctx.beginPath();
+        for (let k = -bwdN; k <= 0; k += 2) {
+          const idx = ((pIdx + k) % n + n) % n;
+          const rx = (trackLut.pos[idx * 3] - px) * scale;
+          const rz = (trackLut.pos[idx * 3 + 2] - pz) * scale;
+          if (k === -bwdN) ctx.moveTo(rx, rz); else ctx.lineTo(rx, rz);
+        }
+        ctx.stroke();
+
+        /* 前方路段：按曲率分色——直道青 / 中弯琥珀 / 急弯橙红。
+         * "哪里该刹车"直接画在线上：半径≤150m 收油、≤75m 重刹
+         * （对应 sqrt(μgR) 的舒适过弯速度量级）。三遍分桶描边避免逐段 stroke，
+         * 段间断流用 lastK 判定重开子路径，防止跨段直线弦。 */
+        const rad = trackLut.radius;
+        for (let bucket = 0; bucket < 3; bucket++) {
+          ctx.strokeStyle = bucket === 0 ? 'rgba(0,240,255,0.85)'
+            : bucket === 1 ? 'rgba(255,196,60,0.95)' : 'rgba(255,92,60,0.95)';
+          if (bucket === 2) ctx.lineWidth = 4; // 急弯加粗一档，余光里也读得到
+          ctx.beginPath();
+          let drawn = false, lastK = 0;
+          for (let k = 0; k <= fwdN; k += 2) {
+            const idx = ((pIdx + k) % n + n) % n;
+            const r = rad ? rad[idx] : 5000;
+            const b = r <= 75 ? 2 : r <= 150 ? 1 : 0;
+            if (b !== bucket) continue;
+            const rx = (trackLut.pos[idx * 3] - px) * scale;
+            const rz = (trackLut.pos[idx * 3 + 2] - pz) * scale;
+            if (!drawn || k - lastK > 2) ctx.moveTo(rx, rz); else ctx.lineTo(rx, rz);
+            lastK = k; drawn = true;
+          }
+          if (drawn) ctx.stroke();
+          if (bucket === 2) ctx.lineWidth = 3;
+        }
+
+        /* 起终点线（LUT 索引 0）：垂直于赛道方向、横跨路宽的白线（路宽26m，画30m略出头） */
+        {
+          const x0 = (trackLut.pos[0] - px) * scale;
+          const z0 = (trackLut.pos[2] - pz) * scale;
+          const tx = trackLut.tan[0], tz = trackLut.tan[2]; // 赛道切向（XZ）
+          const inv = 1 / Math.max(1e-6, Math.sqrt(tx * tx + tz * tz));
+          const nx = -tz * inv, nz = tx * inv;              // 法向 = 横跨路宽
+          const half = 15 * scale;
+          ctx.strokeStyle = 'rgba(255,255,255,0.92)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(x0 - nx * half, z0 - nz * half);
+          ctx.lineTo(x0 + nx * half, z0 + nz * half);
+          ctx.stroke();
+        }
+
+        /* 障碍：前方可视范围内红点 */
+        ctx.fillStyle = '#ff4d5e';
+        for (let i = 0; i < activeObstacles.length; i++) {
+          const obs = activeObstacles[i];
+          const ud = obs.userData;
+          if (!obs.visible || ud.hit || ud.evaded) continue;
+          const dx = obs.position.x - px, dz = obs.position.z - pz;
+          const ahead = dx * (-sinH) + dz * (-cosH); // 车头方向投影（米，正=前方）
+          if (ahead < -10 || ahead > MINIMAP_VIEW_AHEAD) continue;
+          const sx = (dx * cosH - dz * sinH) * scale;
+          const sy = (dx * sinH + dz * cosH) * scale;
+          ctx.beginPath(); ctx.arc(sx, sy, 2.6, 0, Math.PI * 2); ctx.fill();
+        }
+
+        /* AI 车：三色圆点 */
+        for (let i = 0; i < AI_CARS.length; i++) {
+          const ai = AI_CARS[i];
+          if (!ai || !ai.car || !ai.car.mesh || !ai.car.mesh.visible) continue;
+          const dx = ai.car.mesh.position.x - px, dz = ai.car.mesh.position.z - pz;
+          const sx = (dx * cosH - dz * sinH) * scale;
+          const sy = (dx * sinH + dz * cosH) * scale;
+          ctx.fillStyle = AI_COLORS[i % AI_COLORS.length];
+          ctx.beginPath(); ctx.arc(sx, sy, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(255,255,255,0.7)'; ctx.lineWidth = 1.2;
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        /* 玩家箭头：固定朝上，不随地图旋转 */
+        ctx.save();
+        ctx.translate(C, C + 10);
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(0, -9); ctx.lineTo(6.5, 6); ctx.lineTo(0, 2.6); ctx.lineTo(-6.5, 6);
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+
+        /* AI 距离数字：屏幕方向不旋转，用 LUT 弧长差换算前后距离（含环绕） */
+        const pArc = pIdx * sp;
+        const L = trackLut.length;
+        for (let i = 0; i < AI_CARS.length; i++) {
+          const ai = AI_CARS[i];
+          if (!ai || !ai.car || !ai.car.mesh || !ai.car.mesh.visible) continue;
+          const aArc = (ai.car.lutIndex | 0) * sp;
+          let d = (aArc - pArc + L) % L;
+          if (d > L * 0.5) d -= L;
+          if (Math.abs(d) > MINIMAP_VIEW_AHEAD + 40) continue;
+          const dx = ai.car.mesh.position.x - px, dz = ai.car.mesh.position.z - pz;
+          const sx = C + (dx * cosH - dz * sinH) * scale;
+          const sy = C + 10 + (dx * sinH + dz * cosH) * scale;
+          const label = (d >= 0 ? '+' : '') + Math.round(d) + 'm';
+          ctx.font = 'bold 11px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = 3;
+          ctx.strokeStyle = 'rgba(10,22,38,0.85)'; // 深色描边：压在赛道线/障碍点上仍可读
+          ctx.strokeText(label, sx, sy - 8);
+          ctx.fillStyle = 'rgba(255,255,255,0.92)';
+          ctx.fillText(label, sx, sy - 8);
+        }
+      }
+
       /**
        * 刷新雷达标记。car 为 null 时全部隐藏（返回大厅时调用）。
        * 逐轮贪心取最近者（共 RADAR_MARK_COUNT 轮）而非全量排序，
@@ -5428,26 +5691,39 @@
 
         // 三源合成：取最强输入，互不覆盖（修复旧版 touchend 清零截断另一侧按键）
         const touchBrake = touchState.brake ? 1 : 0;
+        const touchDriftNow = Math.abs(touchState.steerValue) > DRIFT_SIM_MIN; // 触屏重拖=漂移手势
 
         inputs.throttle = Math.max(keyThrottle, padState.throttle);
         /* 自动油门：里程分与车速正相关，触屏上几乎不存在"该收油"的直道，
          * 手动油门键只是白占一根拇指。踩刹车时让位（否则无法倒车），
+         * 漂移手势中保持（方向重拖=漂移，不再借刹车键，油门照给→保速漂移），
          * 手柄在位时完全不介入（模拟量油门本就是操作的一部分）。 */
-        if (isTouchUI && touchBrake === 0 && !padState.active
+        if (isTouchUI && (touchBrake === 0 || touchDriftNow) && !padState.active
           && inputs.throttle === 0 && countdownTime <= 0) {
           inputs.throttle = 1;
         }
         inputs.brake = Math.max(touchBrake, keyBrake, padState.brake);
         inputs.nitro = keyNitro || padState.nitro || touchState.nitro;
-        // 移动端组合漂移：刹车踩下且带明显横舵才自动拉手刹，保留两指漂移而不误触发
-        inputs.handbrake = keyHandbrake || padState.handbrake
-          || (touchBrake > 0 && Math.abs(touchState.steerValue) > TOUCH_DRIFT_STEER_MIN);
+        // 手刹仅由明确按键触发（桌面空格 / 手柄），触屏不再"刹车+拖舵"自动拉手刹，
+        // 避免紧弯刹车急打方向被误判成漂移而强制动失控
+        inputs.handbrake = keyHandbrake || padState.handbrake;
 
         // 转向取最强输入：逐个比较而非构造候选数组，保持主循环零分配
         let steer = touchState.steerValue;
         if (Math.abs(keySteer) > Math.abs(steer)) steer = keySteer;
         if (padState.active && Math.abs(padState.steer) > Math.abs(steer)) steer = padState.steer;
         inputs.steer = steer;
+
+        /* 方向漂移（三端统一规则）：刹车踩住 + 横舵过门槛 = 动力漂移（低制动甩尾），
+         * 松开即出弯小喷（物理步 _driftBtnPrev 边沿）。键盘方向键是 ±1 二值、
+         * 手柄摇杆与触屏是模拟量，同一个 0.55 门槛语义一致：明确打方向才漂。
+         * 注意必须放在 steer 合成之后——读的是三源取强后的最终舵角。 */
+        /* 漂移触发（三端）：
+         * 触屏/手柄 = 模拟量重拖纯方向触发（轻拖=正常转向，重拖=漂移），不占刹车键；
+         * 键盘 A/D 是二值 ±1 无法分级，只能保留"刹车 + 方向"组合触发。
+         * 注意必须放在 steer 合成之后——读的是三源取强后的最终舵角。 */
+        const driftSteerOver = Math.abs(inputs.steer) > (isTouchUI || padState.active ? DRIFT_SIM_MIN : 0.55);
+        inputs.drift = (isTouchUI || padState.active) ? driftSteerOver : (inputs.brake > 0 && driftSteerOver);
       }
 
       function resetAllInputs() {
@@ -5455,6 +5731,7 @@
         inputs.handbrake = false; inputs.nitro = false;
         touchState.brake = false; touchState.nitro = false;
         touchState.steerValue = 0;
+        inputs.drift = false;
         if (resetSteerPadVisual) resetSteerPadVisual();
         Object.keys(keys).forEach(k => { keys[k] = false; });
         document.querySelectorAll('.pressed').forEach(el => el.classList.remove('pressed'));
@@ -6582,6 +6859,8 @@
         car.suspensionRoll = 0;
         car.gForce = 0;
         car.isDrifting = false;
+        car._driftBtnPrev = false; car._bigDriftPrev = false; car._driftHoldT = 0;
+        car._miniBoostT = 0; car._miniBoostA = 0; car._miniBoostSec = 1;
         car.isNitroActive = false;
         car.nitroAmount = 0;
         /* 开局给一瓶：让"点一下放氮气"这个动作在第一段直线上就能被试出来，
@@ -6647,7 +6926,10 @@
        * 两个档位 40 局全部完赛、0 次退赛（仅第 2 圈重布障碍的瞬间偶发 3 次擦撞）。 */
       const AI_DIFFICULTY = {
         pro:    { pace: 0.905, boostRate: 1.08, brakeGain: 0.82, accelGain: 0.90, mistake: 0.90, band: 0.55, easeMargin: 150 },
-        master: { pace: 0.950, boostRate: 1.12, brakeGain: 0.95, accelGain: 1.02, mistake: 0.60, band: 0.90, easeMargin: 240 },
+        /* 2026-09-06 两次下调（用户先后要求降一点、再降一点）：pace 累计 -3.7%，
+         * 刹车/出弯两档保守，估算圈速比原标定慢 4~5%。
+         * mistake/band 不动：失误率是人味不是水平，降难度不靠把它变滑稽。 */
+        master: { pace: 0.915, boostRate: 1.12, brakeGain: 0.82, accelGain: 0.95, mistake: 0.60, band: 0.90, easeMargin: 240 },
       };
       const AI_TIER = AI_DIFFICULTY.master;
 
@@ -7197,6 +7479,7 @@
             if (dx * dx + dz * dz < 2.35 * 2.35) {
               playerCar.vLong *= 0.84;
               playerCar.vLat *= 0.7;
+              playerCar._driftHoldT = 0; // 对撞作废本次漂移
               ai.v *= 0.72;
               ai.cooldown = 1.2;
               ai.shoveLat = Math.max(-8.5, Math.min(8.5,
@@ -7413,6 +7696,7 @@
         for (let i = 0; i < activeObstacles.length; i++) activeObstacles[i].visible = false;
         activeObstacles = [];
         clearSkidmarks();
+        if (minimapCtx) minimapCtx.clearRect(0, 0, MM_SIZE, MM_SIZE); // 清空小地图残留帧
         resetRaceData();
         resetAllInputs();
         updateRadar(null);
@@ -7732,6 +8016,7 @@
       /* 动态分辨率缩放：滚动统计帧率，掉帧时下调渲染倍率、恢复后回升。
        * 桌面端下限 1.0（不降采样），移动端下限 0.65，兼顾流畅与画质。 */
       const RES_MIN_SCALE = isMobileDevice ? 0.65 : 0.85; // 桌面 1.0→0.85：掉帧时也能降分辨率自救
+      let shadowMapRes = 512;   // 桌面阴影分辨率：掉帧到底后 512→256 单向降级（fill 减 4 倍）
       let renderScale = 1;
       let fpsAccumMs = 0;
       let fpsFrames = 0;
@@ -7777,6 +8062,14 @@
         } else if (avgFps > 57 && renderScale < 1) {
           renderScale = Math.min(1, renderScale + 0.1);
           applyPixelRatio();
+        }
+        /* 桌面阴影降级（单向）：分辨率已到底仍掉帧 → 阴影 512→256（fill 减 4 倍）。
+         * 移动端不开阴影，跳过；重建 shadow map 需释放旧 map 让 Three 下次渲染重新生成。 */
+        if (avgFps < 45 && !isMobileDevice && shadowMapRes > 256) {
+          shadowMapRes = 256;
+          sunLight.shadow.mapSize.width = 256;
+          sunLight.shadow.mapSize.height = 256;
+          if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
         }
       }
 
@@ -7895,6 +8188,7 @@
             updateDashboardHud(playerCar);
             updateScoreHud();
             updateRadar(playerCar);
+            updateMinimap(now);
             AudioFX.updateListener(camera);
             AudioFX.updateEngine(0.18, 0, false, false, 0, 0, { brake: 0, surface: playerCar.surfaceType });
             renderFrame();
@@ -7911,6 +8205,7 @@
           updateClouds(camera);
           updateParticles(delta);
           updateRadar(playerCar);
+          updateMinimap(now);
           updateDashboardHud(playerCar);
           updateScoreHud();
 
@@ -7970,6 +8265,7 @@
         const schedulePostFX = window.requestIdleCallback || function (cb) { return setTimeout(cb, 1800); };
         schedulePostFX(() => { initPostFX(); }, { timeout: 2200 });
         initObstacleRadar();
+        initMinimap();
         initEvents();
         updateBestScoreDisplay();
         // 大厅默认低功耗展台：隐藏赛道设施（发车时恢复），AI 车延迟到首次发车再构建
