@@ -1221,7 +1221,7 @@
       /* 方向漂移（刹车+横舵触发的动力漂移）：比手刹制动低得多（0.35 vs 1.6），
        * 甩尾靠横向阻尼骤降而非拖速度，玩家用走线换集气而不掉速——
        * 飞车式"入弯漂移、出弯爆发"的核心手感。 */
-      const DRIFT_BRAKE_MULT = 0.35;
+      const DRIFT_BRAKE_MULT = 0.5;     // 漂移固定轻制动系数（0.35→0.5：减速对价更明显，≈17 m/s²，远轻于手刹）
       const DRIFT_MINI_BOOST_SEC = 0.4;     // 松开漂移键的出弯小喷时长
       const DRIFT_MINI_BOOST_MIN = 0.35;    // 触发小喷所需的最短有效漂移时间（防误触白嫖）
       const MINI_BOOST_ACCEL = 0.85;        // 小喷加速度加成（线性衰减；0.45 时实测仅 +2.5km/h 无感）
@@ -1235,14 +1235,16 @@
       const DRIFT_BIG_GAIN_MULT = 1.5;      // 大漂移集气倍率
       const DRIFT_ANGLE_RAMP_SEC = 0.45;    // 漂移侧滑角随按住时长从入口阻尼渐滑到全滑（秒）（0.9→0.45：半秒拉满，跟手）
       const DRIFT_ENTRY_LAT_DAMP = 1.6;     // 漂移入口横向阻尼：低于正常抓地以建立 isDrifting，高于全滑=入弯小角度（3.2→2.2→1.6：入口更滑、甩尾更早）
-      const DRIFT_FULL_LAT_DAMP = 1.0;      // 漂移全滑阻尼：比手刹(1.5)更深——漂移甩尾幅度的大旋钮（侧滑角≈30°）
-      const DRIFT_STEER_HEADROOM_MULT = 1.35; // 漂移中物理舵角放宽：抓地圆项×1.35，车头转得更深→甩尾更猛（飞车"漂移中方向打得更满"）
+      const DRIFT_FULL_LAT_DAMP = 0.9;      // 漂移全滑阻尼：比手刹(1.5)更深——漂移甩尾幅度的大旋钮（1.0→0.9：侧滑角≈33°，甩尾更猛）
+      const DRIFT_STEER_HEADROOM_MULT = 1.7; // 漂移中物理舵角放宽：抓地圆项×1.7（1.5→1.7：漂移中车头转得更深、甩尾更猛）
+      const DRIFT_V_EASE = 0.75;              // 漂移中有效速度折扣：v² 对舵角上限的压制减轻（v_eff=v×0.75 → 高速漂移也能转大弯，防撞墙核心旋钮）
+      const DRIFT_YAW_BOOST = 1.8;            // 漂移横摆增强（rad/s，满侧滑时）：车头主动向转向方向偏转——"漂移=转弯加速"，大弯靠它转过来而非被动等侧滑
       const HANDBRAKE_LAT_DAMP = 1.5; // 拉手刹时横向对齐速率骤降 → 后轴滑移
       const STEER_MAX_RAD = 0.56;     // 最大前轮转角（弧度，同时也是视觉极限）
       const STEER_FILTER_RATE = 20;   // 舵角基础响应速率 (1/s)——弯中跟手的主旋钮（18→20：响应更快）
       const TOUCH_STEER_DEAD_ZONE = 8;    // 转向盘中心死区（像素），杜绝拇指停放时的抖动舵角
       const TOUCH_STEER_GAIN = 1.15;      // 触屏转向幅度增益：拉 87% 行程即满舵，缓解"转不动"
-      const DRIFT_SIM_MIN = 0.8;          // 触屏/手柄模拟量漂移门槛：重拖 80% 以上才漂（轻拖=正常转向）
+      const DRIFT_SIM_MIN = 0.9;          // 触屏/手柄模拟量漂移门槛：重拖 90% 以上才漂（0.8→0.9：更刻意才触发，普通急转弯不再误漂）
       const WHEEL_RADIUS = 0.38;      // 车轮半径（米），用于轮速滚动换算
       const SLIP_DRIFT_MIN = 2.4;     // 横向滑移速度阈值（米/秒），超过判定为漂移（2.6→2.4：更快进入漂移态，仍在正常转弯稳态 2.2 之上）
       const DRIFT_SPEED_FLOOR = 6;    // 漂移判定的最低纵向速度（米/秒），排除原地打轮（8→6：低速弯也能漂起来）
@@ -4553,12 +4555,14 @@
          *    玩家必须减速过弯；视觉舵角仍按满舵偏转，避免车轮看着不动。
          *    氮气激活时物理舵角上限 -12%（高速更稳，不会一碰就甩）。 */
         const nitroSteer = car.isNitroActive ? NITRO_CFG.steerReduction : 1;
-        /* 漂移中物理舵角放宽：抓地圆项 ×1.35（车头转得更深→vLat 增长更快→甩尾更猛），
+        /* 漂移中物理舵角放宽：抓地圆项 ×1.7 + 有效速度打 75 折（v² 对舵角的压制减轻，
+         * 高速漂移也能转大弯——防撞墙核心；抓地圆 aLatMax 仍按真实速度算，不白嫖抓地），
          * 但整体仍被 STEER_MAX_RAD 封顶，不会超过视觉满舵。 */
+        const vEff = inputs.drift ? Math.max(4, vAbs * DRIFT_V_EASE) : vAbs;
         const steerLimitPhys = Math.min(
           STEER_MAX_RAD,
           GRIP_STEER_HEADROOM * (inputs.drift ? DRIFT_STEER_HEADROOM_MULT : 1)
-            * aLatMax * spec.wheelbase / (vAbs * vAbs),
+            * aLatMax * spec.wheelbase / (vEff * vEff),
         ) * nitroSteer;
         const steerTarget = -inputs.steer * steerLimitPhys;
         /* 转向非线性响应：起转段速率 ×1.6（键盘一按就有"咬地"的瞬间响应），
@@ -4580,7 +4584,15 @@
         car.wheels[1].rotation.y = car.visualSteer;
 
         // 5. 车头运动学偏航（阿克曼）：v_lat 由轮胎力在下一步负责拉回
-        const yawRate = (car.vLong / spec.wheelbase) * Math.tan(car.steerAngle);
+        let yawRate = (car.vLong / spec.wheelbase) * Math.tan(car.steerAngle);
+        if (inputs.drift) {
+          /* 漂移横摆增强（街机"漂移=转弯加速"）：车头主动向转向方向偏转，
+           * 强度随侧滑深度增长（滑得越狠转得越快），0.25s 内建立避免突跳。
+           * 符号与 steerAngle 一致（steer=+1 右转 → heading 减）。 */
+          const slipNorm = Math.min(1, Math.abs(car.vLat) / 18);
+          const rampIn = Math.min(1, car._driftHoldT / 0.25);
+          yawRate += (-inputs.steer) * DRIFT_YAW_BOOST * slipNorm * rampIn;
+        }
         car.heading += yawRate * delta;
 
         const forward = S.v2.copy(S.axisZneg).applyAxisAngle(S.axisY, car.heading);
@@ -4605,11 +4617,10 @@
           let brakeForce = targetBrake * spec.brakeRate * grip;
           if (inputs.handbrake) brakeForce += spec.brakeRate * HANDBRAKE_BRAKE_MULT;
           else if (inputs.drift) {
-            /* 方向漂移"接管"刹车而非叠加：方向漂移本就要求按住刹车，
-             * 若全额常规制动力（34 m/s²）照常生效，漂移=全刹车急停，
-             * "保速甩尾"名存实亡。接管后漂移中只留 0.35×brakeRate 维持滑移，
-             * 净减速约 4~5 m/s²——这才是"用走线换速度"的合理对价。 */
-            brakeForce = Math.min(brakeForce, spec.brakeRate * DRIFT_BRAKE_MULT * grip);
+            /* 方向漂移固定轻制动（不再取 min——旧结构在"方向触发不踩刹车"时 brakeForce=0，
+             * 漂移竟零制动不掉速）。固定 0.5×brakeRate（≈17 m/s²）作为"走线换速度"的对价：
+             * 明显减速但远轻于手刹（1.6×54），且油门仍在（触屏自动保持），净效果=滑行甩尾。 */
+            brakeForce = spec.brakeRate * DRIFT_BRAKE_MULT * grip;
           }
 
           car.vLong += (power - brakeForce) * delta;
